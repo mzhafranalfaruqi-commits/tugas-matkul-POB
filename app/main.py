@@ -1,4 +1,4 @@
-"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB."""
+"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB & KRS."""
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -7,11 +7,15 @@ from fastapi.responses import JSONResponse
 
 from app.routers.krs import router as krs_router
 from app.routers.pmb import router as pmb_router
+from app.services.exceptions import KRSError
 
 app = FastAPI(
     title="SEVIMA-Mini — Modul PMB & KRS API",
-    description="REST API Penerimaan Mahasiswa Baru dan Pengisian KRS dengan Rantai Validasi",
-    version="1.1.0",
+    description=(
+        "REST API Penerimaan Mahasiswa Baru, Pengisian & State Machine KRS, "
+        "Approval/Revisi Dosen PA, dan Rekomendasi Jadwal CSP"
+    ),
+    version="1.2.0",
 )
 
 
@@ -21,6 +25,15 @@ async def validasi_400(_request: Request, exc: RequestValidationError) -> JSONRe
     return JSONResponse(
         status_code=400,
         content={"detail": jsonable_encoder(exc.errors())},
+    )
+
+
+@app.exception_handler(KRSError)
+async def krs_error_handler(_request: Request, exc: KRSError) -> JSONResponse:
+    """Handler polimorfik tunggal yang memetakan setiap subkelas KRSError ke status HTTP-nya."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc)},
     )
 
 

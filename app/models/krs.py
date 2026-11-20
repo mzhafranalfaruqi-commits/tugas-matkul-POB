@@ -1,20 +1,25 @@
 """Model ORM SQLAlchemy 2.0 untuk modul Kartu Rencana Studi (KRS)."""
 
-from datetime import time
+from datetime import datetime, time, timezone
 import enum
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
+    DateTime,
     Enum as SAEnum,
     ForeignKey,
+    Integer,
     String,
     Table,
     UniqueConstraint,
+    text as sa_text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.pmb import Base
+from app.services.exceptions import TransitionError
 
 
 class KRSStatus(str, enum.Enum):
@@ -24,6 +29,21 @@ class KRSStatus(str, enum.Enum):
     SUBMITTED = "SUBMITTED"
     APPROVED = "APPROVED"
     REVISION = "REVISION"
+
+
+class Actor(str, enum.Enum):
+    """Aktor yang berhak memicu transisi pada state machine KRS."""
+
+    MAHASISWA = "MAHASISWA"
+    DOSEN_PA = "DOSEN_PA"
+
+
+# Tabel transisi eksplisit state machine KRS: (status_awal, aktor) -> {status_tujuan}
+TRANSITIONS: dict[tuple[KRSStatus, Actor], set[KRSStatus]] = {
+    (KRSStatus.DRAFT, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
+    (KRSStatus.SUBMITTED, Actor.DOSEN_PA): {KRSStatus.APPROVED, KRSStatus.REVISION},
+    (KRSStatus.REVISION, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
+}
 
 
 krs_status_enum = SAEnum(KRSStatus, name="krs_status", create_constraint=True)
@@ -90,10 +110,40 @@ class KRS(Base):
     semester: Mapped[str] = mapped_column(String(5))
     status: Mapped[KRSStatus] = mapped_column(krs_status_enum, default=KRSStatus.DRAFT)
     dosen_pa_id: Mapped[int | None] = mapped_column(default=None)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    catatan_revisi: Mapped[str | None] = mapped_column(String(500), default=None)
+    diubah_pada: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=sa_text("1")
+    )
+
+    __mapper_args__ = {"version_id_col": version}
 
     details: Mapped[list["KRSDetail"]] = relationship(
         back_populates="krs", cascade="all, delete-orphan"
     )
+    logs: Mapped[list["KRSLog"]] = relationship(
+        back_populates="krs", cascade="all, delete-orphan"
+    )
+
+    def cek_transisi(self, target: KRSStatus, actor: Actor) -> None:
+        """Memvalidasi apakah transisi state dari status saat ini oleh aktor diizinkan."""
+        if target not in TRANSITIONS.get((self.status, actor), set()):
+            raise TransitionError(
+                f"Transisi tidak diizinkan: {self.status.name} ke {target.name} oleh {actor.name}"
+            )
+
+    def transition(self, target: KRSStatus, actor: Actor) -> None:
+        """Mengubah status KRS setelah memvalidasi aturan transisi state machine."""
+        self.cek_transisi(target, actor)
+        self.status = target
 
 
 class KRSDetail(Base):
@@ -113,3 +163,40 @@ class KRSDetail(Base):
 
     krs: Mapped["KRS"] = relationship(back_populates="details")
     matakuliah: Mapped["MataKuliah"] = relationship()
+
+
+class KRSLog(Base):
+    """Jejak audit setiap transisi atau peristiwa penting pada siklus KRS."""
+
+    __tablename__ = "krs_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    krs_id: Mapped[int] = mapped_column(
+        ForeignKey("krs.id", ondelete="CASCADE"), index=True
+    )
+    aksi: Mapped[str] = mapped_column(String(30))
+    aktor_id: Mapped[str] = mapped_column(String(50))
+    catatan: Mapped[str | None] = mapped_column(String(500), default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    krs: Mapped["KRS"] = relationship(back_populates="logs")
+
+
+class Notifikasi(Base):
+    """Notifikasi hasil persetujuan atau permintaan revisi KRS untuk mahasiswa."""
+
+    __tablename__ = "notifikasi"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nim: Mapped[str] = mapped_column(
+        String(15), ForeignKey("calon_mahasiswa.nim"), index=True
+    )
+    pesan: Mapped[str] = mapped_column(String(500))
+    terbaca: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

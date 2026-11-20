@@ -24,14 +24,44 @@ class DataNIMTidakValid(Exception):
 class KRSError(Exception):
     """Base domain exception untuk seluruh pelanggaran aturan pada Modul KRS."""
 
+    status_code: int = 400
+
 
 class KRSTidakDitemukan(KRSError):
     """Dilempar ketika mahasiswa ber-NIM, KRS, atau mata kuliah tidak ditemukan (HTTP 404)."""
 
-
-class KRSStatusTidakValid(KRSError):
-    """Dilempar ketika KRS berada pada status yang tidak dapat diubah (HTTP 409)."""
+    status_code = 404
 
 
 class KRSValidasiGagal(KRSError):
-    """Dilempar ketika pengisian KRS gagal pada rantai validator (HTTP 400)."""
+    """Dilempar ketika pengisian atau pengajuan KRS gagal validasi bisnis (HTTP 400)."""
+
+    status_code = 400
+
+
+class ForbiddenError(KRSError):
+    """Dilempar ketika aktor bukan pemilik sah resource, misalnya bukan Dosen PA mahasiswa (HTTP 403)."""
+
+    status_code = 403
+
+
+class TransitionError(KRSError):
+    """Dilempar ketika transisi status state machine KRS tidak diizinkan (HTTP 409)."""
+
+    status_code = 409
+
+
+class KRSLockedError(KRSError):
+    """Dilempar ketika KRS berada pada status terkunci (SUBMITTED/APPROVED) saat hendak diubah (HTTP 409)."""
+
+    status_code = 409
+
+
+class StaleVersionError(KRSError):
+    """Dilempar ketika versi KRS sudah berubah oleh proses lain (optimistic locking conflict, HTTP 409)."""
+
+    status_code = 409
+
+
+# Alias kompatibilitas untuk modul/pengujian Minggu 5
+KRSStatusTidakValid = KRSLockedError

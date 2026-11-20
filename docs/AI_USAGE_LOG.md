@@ -1,6 +1,6 @@
-# AI Usage Log — Implementasi Modul PMB & KRS SEVIMA-Mini (Minggu 3–5)
+# AI Usage Log — Implementasi Modul PMB & KRS SEVIMA-Mini (Minggu 3–6)
 
-Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, perbaikan arsitektur NIM generator berbasis database lock (Minggu 4), serta implementasi Modul KRS bagian 1 (*Chain of Responsibility*, query prasyarat terindeks, dan `KRSManager` di Minggu 5). Versi terstruktur sesuai format silabus + kerangka **OPAR** (*Observe, Plan, Act, Reflect*) tersedia lengkap pada [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
+Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, perbaikan arsitektur NIM generator berbasis database lock (Minggu 4), Modul KRS bagian 1 (*Chain of Responsibility*, query prasyarat terindeks, dan `KRSManager` di Minggu 5), serta Modul KRS bagian 2 (State Machine, Approval Dosen PA Atomik, Optimistic Locking, *Property-Based Testing*, dan CSP Recommender di Minggu 6). Versi terstruktur sesuai format silabus + kerangka **OPAR** (*Observe, Plan, Act, Reflect*) tersedia lengkap pada [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
 
 ## Kepatuhan AI-First Charter
 
@@ -18,6 +18,7 @@ Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema dat
 | 3 | Pembaruan Minggu 4: `PMBService`, `409 Conflict`, & NIM Generator Anti Race Condition | Mistral & Antigravity | Output awal Minggu 3 memakai `threading.RLock()` dan `MAX(nim) + 1`, padahal lock Python gagal di lingkungan multi-worker/multi-server; status conflict `rejected -> approve` sempat disamakan ke `400`. | **Menghapus `threading.Lock()`**, menambah tabel `nim_counter` (`0002_tabel_nim_counter.py`), memakai `with_for_update()` + `BEGIN IMMEDIATE` + `db.flush()` + `UNIQUE` + retry, memecah `format_nim()`, dan memetakan konflik status ke **`409 Conflict`**. |
 | 4 | Strategi Pengujian `pytest` & OpenAPI Docs | Codeium & Antigravity | Tes awal belum menguji fungsi murni `format_nim()` tanpa DB, overflow batas `9999`, atomicity rollback bila commit gagal, race condition idempotency pada ID yang sama, maupun kode `400` untuk kode prodi tidak valid. | Menambahkan tes unit murni `format_nim()`, tes overflow & atomicity rollback, tes paralel 5 pendaftar + 2 thread idempotency pada file DB sementara, tes `400`/`409` pada approve/reject, dan validasi schema `/openapi.json` serta `/redoc`. |
 | 5 | Modul KRS Bag. 1: Skema 2-Tingkat, Chain of Responsibility, Query `NOT EXISTS`, & `KRSManager` | Antigravity & Mistral | Potensi terbalik arah *self-referencing* `prerequisite`, jebakan string `'B' >= 'C'`, cek bentrok naif (`jam_mulai == jam_mulai`), N+1 query / tanpa index pada cek prasyarat, serta celah *race condition* 2 tab 27 SKS saat `add_course`. | Membuat model `SkalaNilai`, `MataKuliah`, `prerequisite`, `KRS`, `KRSDetail` (`0003_tabel_krs.py`); membangun rantai `Duplicate -> SKS -> Prerequisite -> Conflict` dengan interval `<`; memakai query `NOT EXISTS` terverifikasi `EXPLAIN QUERY PLAN`; serta mengunci baris KRS dengan `with_for_update()` / `BEGIN IMMEDIATE`. |
+| 6 | Modul KRS Bag. 2: State Machine, Approval/Revisi Atomik, Optimistic Lock, Property Testing (`hypothesis`), & CSP Recommender | Antigravity, Mistral, & Codeium | Pengubahan `krs.status = ...` langsung tanpa enkapsulasi, lupa menaikkan `version` header saat `KRSDetail` diubah, mencampur `403` vs `409`, serta *property test* yang hanya menghitung angka di memori atau memakai `bentrok()` sendiri sebagai oracle. | Mengenkapsulasi transisi lewat `Actor` + `TRANSITIONS` + `KRS.transition()`; menyentuh `diubah_pada` di `add_course`/`remove_course` agar `version_id_col` naik; membuat 1 handler polimorfik `KRSError`; membuktikan invarian SKS & bentrok via `hypothesis` (`1000` contoh + oracle `_slot()`); menguji ke-28 transisi ilegal; serta menambah `KRSRecommender` CSP + guardrail validator (ADR-008 & ADR-009). |
 
 ---
 
@@ -43,10 +44,15 @@ Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema dat
 
 - **Evaluasi Kritis:** Menolak perbandingan string nilai huruf (`nilai >= 'C'`) yang keliru di SQLite/MySQL dan memastikan kuliah bersambung (misalnya `08:00–10:30` dan `10:30–12:30`) diizinkan dengan operator `<`, serta membuktikan penghapusan *full table scan* lewat [docs/EXPLAIN_PRASYARAT.md](EXPLAIN_PRASYARAT.md).
 
+### Prompt Terbaik 5 — State Machine KRS, Optimistic Lock, Hypothesis & CSP Guardrail (Minggu 6)
+> "Enkapsulasi state machine `KRS` memakai enum `Actor` dan kamus `TRANSITIONS` pada `app/models/krs.py`, tambah migrasi `0004` (`version`, `krs_log`, `notifikasi`), serta implementasikan `submit_krs`, `approve_krs`, dan `revise_krs` atomik (1 commit + rollback penuh) dengan otorisasi PA `403` vs konflik status/versi basi `409`. Tambahkan test `hypothesis` (`max_examples=1000`) yang menguji `SKSValidator` & `ConflictValidator` (oracle `_slot` independen), ke-28 transisi ilegal `itertools.product`, dan `KRSRecommender` CSP dengan guardrail validator."
+
+- **Evaluasi Kritis:** Memastikan tidak ada `krs.status = ...` langsung di service/router, memaksa naik `version` lewat `_sentuh_krs()` setiap `add_course`/`remove_course`, menghindari tautologi *property test* dengan oracle independen `_slot()`, serta menjaga prinsip bahwa rekomendasi CSP selalu divalidasi ulang oleh rantai validator sebelum keluar ke API.
+
 ---
 
 ## Ringkasan Verifikasi Akhir & OPAR
 
-- **Migrasi Alembic:** `0001_tabel_pmb` → `0002_tabel_nim_counter` → `0003_tabel_krs` (`upgrade head`, `downgrade -1`, `upgrade head`, `seed.py` x2) berjalan tanpa error.
-- **Test Suite & Coverage:** **`41 passed in 6.46s`** (30 tes PMB + 11 unit/integration/concurrency tests KRS), total coverage **`95.83%`** (`96%`), memenuhi syarat minimal `--cov-fail-under=80`.
-- **Refleksi Limitasi (OPAR — Reflect):** Uji paralel multi-thread membuktikan konsistensi penomoran NIM dan proteksi batas 24 SKS ("2 tab, 1 detik, 27 SKS") di SQLite tanpa lock Python, namun perilaku *row lock* `SELECT ... FOR UPDATE` pada InnoDB MySQL/PostgreSQL tetap perlu diverifikasi di DBMS client-server sebelum produksi. Detail OPAR lengkap terdokumentasi di [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
+- **Migrasi Alembic:** `0001_tabel_pmb` → `0002_tabel_nim_counter` → `0003_tabel_krs` → `0004_krs_workflow_audit` (`upgrade head`, `downgrade -1` via `batch_alter_table`, `upgrade head`, `seed.py` x2) berjalan tanpa error.
+- **Test Suite & Coverage:** **`83 passed in 25.56s`** (30 tes PMB + 18 tes KRS integrasi/concurrency/CSP + 35 tes Hypothesis 1000x & exhaustive 32 kombinasi state machine), total coverage **`96.00%`** (`96%`), melampaui syarat minimal `--cov-fail-under=80`.
+- **Refleksi Limitasi (OPAR — Reflect):** Seluruh uji atomicity, optimistic lock, dan `83/83` skenario berjalan lancar di SQLite, sementara perilaku row lock MySQL InnoDB/PostgreSQL serta autentikasi token JWT untuk `dosen_pa_id` dicatat sebagai limitasi eksplisit pada [docs/PR_MINGGU_6.md](PR_MINGGU_6.md) dan [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).

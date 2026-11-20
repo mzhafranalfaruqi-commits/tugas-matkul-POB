@@ -1,4 +1,4 @@
-"""Unit, integration, dan concurrency tests untuk Modul KRS SEVIMA-Mini (Minggu 5)."""
+"""Unit, integration, dan concurrency tests untuk Modul KRS SEVIMA-Mini (Minggu 5–6)."""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timezone
@@ -17,20 +17,27 @@ from app.models import (
     JalurMasuk,
     KRS,
     KRSDetail,
+    KRSLog,
     KRSStatus,
     MataKuliah,
+    Notifikasi,
     ProgramStudi,
     SkalaNilai,
     StatusPMB,
     prerequisite,
 )
 from app.services.exceptions import (
+    ForbiddenError,
+    KRSLockedError,
     KRSStatusTidakValid,
     KRSTidakDitemukan,
     KRSValidasiGagal,
+    StaleVersionError,
+    TransitionError,
 )
 from app.services.krs_manager import KRSManager
 from app.services.krs_queries import prasyarat_belum_lulus
+from app.services.krs_recommender import KRSRecommender
 from app.validators import (
     ConflictValidator,
     DuplicateValidator,
@@ -264,8 +271,27 @@ def test_prerequisite_query_bobot_dan_semester(db_session: Session) -> None:
     assert res.message == "Prasyarat tidak terpenuhi: Struktur Data"
 
 
-def test_krs_manager_add_remove_validate_and_stubs(db_session: Session) -> None:
-    """Uji operasi lengkap KRSManager termasuk REVISION, validate_krs collect-all, dan stub Minggu 6."""
+def test_tambah_mk_tanpa_prasyarat_error(db_session: Session) -> None:
+    """Sesuai modul: mengambil mata kuliah yang prasyaratnya belum lulus wajib ditolak."""
+    nim = _setup_krs_sample_db(db_session)
+    mgr = KRSManager(db_session, semester="20251")
+    with pytest.raises(KRSValidasiGagal, match="Prasyarat tidak terpenuhi: Kalkulus I"):
+        mgr.add_course(nim, "MA102")
+
+
+def test_jadwal_bentrok_error(db_session: Session) -> None:
+    """Sesuai modul: mengambil dua mata kuliah dengan jadwal beririsan wajib ditolak."""
+    nim = _setup_krs_sample_db(db_session)
+    mgr = KRSManager(db_session, semester="20251")
+    mgr.add_course(nim, "IF201")
+    with pytest.raises(
+        KRSValidasiGagal, match="Jadwal bentrok: Statistika dengan Basis Data"
+    ):
+        mgr.add_course(nim, "IF202")
+
+
+def test_krs_manager_add_remove_and_validate(db_session: Session) -> None:
+    """Uji operasi lengkap KRSManager: add, remove, submit/revise lock, dan validate_krs collect-all."""
     nim = _setup_krs_sample_db(db_session)
     mgr = KRSManager(db_session, semester="20251")
 
@@ -299,25 +325,29 @@ def test_krs_manager_add_remove_validate_and_stubs(db_session: Session) -> None:
     with pytest.raises(KRSTidakDitemukan):
         mgr.remove_course(nim, "IF201")
 
-    # Status REVISION masih boleh diubah, SUBMITTED tidak boleh diubah
-    krs.status = KRSStatus.REVISION
-    db_session.commit()
-    mgr.add_course(nim, "IF201")
-
-    krs.status = KRSStatus.SUBMITTED
-    db_session.commit()
+    # Submit -> terkunci (SUBMITTED), lalu Revise -> kembali editable (REVISION)
+    submitted = mgr.submit_krs(nim)
+    assert submitted.status == KRSStatus.SUBMITTED
     with pytest.raises(KRSStatusTidakValid):
         mgr.add_course(nim, "IF204")
-    with pytest.raises(KRSStatusTidakValid):
-        mgr.remove_course(nim, "IF201")
+    with pytest.raises(KRSLockedError):
+        mgr.remove_course(nim, "IF102")
 
-    # Uji validate_krs mengumpulkan seluruh kesalahan sekaligus (sisipkan data bermasalah ganda di DB)
-    krs.status = KRSStatus.DRAFT
+    revised = mgr.revise_krs(nim, 101, "Tambahkan Basis Data")
+    assert revised.status == KRSStatus.REVISION
+    mgr.add_course(nim, "IF201")
+
+    # Uji validate_krs mengumpulkan seluruh kesalahan sekaligus (sisipkan data korup langsung di DB)
+    krs = mgr.get_krs(nim)
     krs.details.append(KRSDetail(kode_mk="MA102"))  # gagal prasyarat Kalkulus I
     krs.details.append(KRSDetail(kode_mk="IF202"))  # bentrok IF201
     for extra in ("IF204", "IF205", "IF206", "IF207", "IF208"):
         krs.details.append(KRSDetail(kode_mk=extra))  # membuat total SKS > 24
     db_session.commit()
+
+    # Submit KRS yang sudah korup di DB wajib ditolak oleh validasi ulang
+    with pytest.raises(KRSValidasiGagal):
+        mgr.submit_krs(nim)
 
     all_errors = mgr.validate_krs(nim)
     messages = [e.message for e in all_errors]
@@ -334,12 +364,6 @@ def test_krs_manager_add_remove_validate_and_stubs(db_session: Session) -> None:
         mgr.validate_krs("0000000-0000")
     with pytest.raises(KRSTidakDitemukan):
         KRSManager(db_session, semester="20261").remove_course(nim, "IF101")
-
-    # Stubs Minggu 6
-    with pytest.raises(NotImplementedError):
-        mgr.submit_krs(nim)
-    with pytest.raises(NotImplementedError):
-        mgr.approve_krs(nim, 101)
 
 
 def test_krs_concurrency_dua_tab_satu_detik_27_sks(tmp_path: Path) -> None:
@@ -477,26 +501,366 @@ def test_krs_api_endpoints_and_openapi(
     }
     assert client.get("/api/krs/9999999-9999/validate").status_code == 404
 
-    # Lock KRS ke SUBMITTED -> POST & DELETE harus mengembalikan 409 Conflict
-    krs_row = db_session.execute(
-        select(KRS).where(KRS.nim == nim, KRS.semester == "20251")
-    ).scalar_one()
-    krs_row.status = KRSStatus.SUBMITTED
-    db_session.commit()
+    # Submit KRS lewat endpoint -> POST & DELETE courses harus mengembalikan 409 Conflict
+    res_submit = client.post(f"/api/krs/{nim}/submit?semester=20251")
+    assert res_submit.status_code == 200
+    assert res_submit.json()["status"] == "SUBMITTED"
 
     assert client.post(f"/api/krs/{nim}/courses?semester=20251", json={"kode_mk": "IF201"}).status_code == 409
     assert client.delete(f"/api/krs/{nim}/courses/IF102?semester=20251").status_code == 409
 
-    # Kembalikan ke DRAFT lalu DELETE -> 200, kemudian DELETE lagi -> 404
-    krs_row.status = KRSStatus.DRAFT
-    db_session.commit()
+    # Kembalikan ke REVISION melalui dosen PA lalu DELETE -> 200, kemudian DELETE lagi -> 404
+    res_revise = client.post(
+        f"/api/krs/{nim}/revise?semester=20251",
+        json={"dosen_pa_id": 101, "catatan": "Sesuaikan jadwal"},
+    )
+    assert res_revise.status_code == 200
+    assert res_revise.json()["status"] == "REVISION"
+
     res_del = client.delete(f"/api/krs/{nim}/courses/IF102?semester=20251")
     assert res_del.status_code == 200
     assert client.delete(f"/api/krs/{nim}/courses/IF102?semester=20251").status_code == 404
 
-    # OpenAPI mempublikasikan endpoint /api/krs/*
+    # OpenAPI mempublikasikan seluruh endpoint /api/krs/* termasuk alur workflow & recommend
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/krs/{nim}" in paths
     assert "/api/krs/{nim}/courses" in paths
     assert "/api/krs/{nim}/courses/{kode_mk}" in paths
     assert "/api/krs/{nim}/validate" in paths
+    assert "/api/krs/{nim}/submit" in paths
+    assert "/api/krs/{nim}/approve" in paths
+    assert "/api/krs/{nim}/revise" in paths
+    assert "/api/krs/{nim}/recommend" in paths
+
+
+def test_workflow_submit_revise_resubmit_approve_dan_audit_log(db_session: Session) -> None:
+    """Uji siklus lengkap DRAFT -> SUBMITTED -> REVISION -> SUBMITTED -> APPROVED beserta audit log."""
+    nim = _setup_krs_sample_db(db_session)
+    mgr = KRSManager(db_session, semester="20251")
+
+    # Submit sebelum KRS ada -> 404
+    with pytest.raises(KRSTidakDitemukan):
+        mgr.submit_krs(nim)
+
+    # Buat KRS lalu kosongkan isinya -> submit KRS kosong wajib gagal (400)
+    mgr.add_course(nim, "IF102")
+    v_awal = mgr.get_krs(nim).version
+    mgr.add_course(nim, "IF201")
+    v_tambah = mgr.get_krs(nim).version
+    assert v_tambah > v_awal
+
+    mgr.remove_course(nim, "IF201")
+    v_hapus = mgr.get_krs(nim).version
+    assert v_hapus > v_tambah
+
+    mgr.remove_course(nim, "IF102")
+    with pytest.raises(KRSValidasiGagal, match="KRS kosong"):
+        mgr.submit_krs(nim)
+
+    # Isi kembali dan submit pertama (DRAFT -> SUBMITTED)
+    mgr.add_course(nim, "IF102")
+    submitted_1 = mgr.submit_krs(nim)
+    assert submitted_1.status == KRSStatus.SUBMITTED
+    assert submitted_1.submitted_at is not None
+    assert submitted_1.dosen_pa_id == 101
+
+    # Submit ulang saat SUBMITTED wajib gagal TransitionError
+    with pytest.raises(TransitionError):
+        mgr.submit_krs(nim)
+
+    # Catatan revisi kosong/spasi wajib ditolak
+    with pytest.raises(KRSValidasiGagal, match="Catatan revisi wajib diisi"):
+        mgr.revise_krs(nim, 101, "   ")
+
+    # Dosen PA kembalikan untuk revisi (SUBMITTED -> REVISION)
+    revised = mgr.revise_krs(nim, 101, "Ambil Basis Data juga")
+    v_rev = revised.version
+    assert revised.status == KRSStatus.REVISION
+    assert revised.catatan_revisi == "Ambil Basis Data juga"
+
+    # Mahasiswa edit lagi (version naik) lalu submit ulang -> SUBMITTED -> APPROVED
+    mgr.add_course(nim, "IF201")
+    assert mgr.get_krs(nim).version > v_rev
+    submitted_2 = mgr.submit_krs(nim)
+    assert submitted_2.status == KRSStatus.SUBMITTED
+
+    approved = mgr.approve_krs(nim, 101, expected_version=submitted_2.version)
+    assert approved.status == KRSStatus.APPROVED
+    assert approved.approved_at is not None
+
+    # Setelah APPROVED tidak bisa di-approve atau di-revise ulang
+    with pytest.raises(TransitionError):
+        mgr.approve_krs(nim, 101)
+    with pytest.raises(TransitionError):
+        mgr.revise_krs(nim, 101, "Telat revisi")
+
+    # Verifikasi catatan KRSLog dan Notifikasi
+    logs = db_session.execute(
+        select(KRSLog).where(KRSLog.krs_id == approved.id).order_by(KRSLog.id)
+    ).scalars().all()
+    assert [log.aksi for log in logs] == ["SUBMIT", "REVISE", "SUBMIT", "APPROVE"]
+
+    notifs = db_session.execute(
+        select(Notifikasi).where(Notifikasi.nim == nim).order_by(Notifikasi.id)
+    ).scalars().all()
+    assert len(notifs) == 2
+    assert "revisi" in notifs[0].pesan.lower()
+    assert "disetujui" in notifs[1].pesan.lower()
+    assert all(n.terbaca is False for n in notifs)
+
+
+def test_otorisasi_dosen_pa_403_dan_optimistic_lock_409(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """Bedakan 403 Forbidden (bukan dosen PA) vs 409 Conflict (state ilegal & stale version)."""
+    nim = _setup_krs_sample_db(db_session)
+    mgr = KRSManager(db_session, semester="20251")
+
+    # Approve/Revise KRS yang belum ada -> 404
+    with pytest.raises(KRSTidakDitemukan):
+        mgr.approve_krs(nim, 101)
+    with pytest.raises(KRSTidakDitemukan):
+        mgr.revise_krs(nim, 101, "Belum ada")
+
+    # Buat mahasiswa baru tanpa riwayat KRS (dosen_pa_id = None) -> siapa pun ditolak 403
+    prodi_id = db_session.execute(
+        select(ProgramStudi.id).where(ProgramStudi.kode == "001")
+    ).scalar_one()
+    jalur_id = db_session.execute(
+        select(JalurMasuk.id).where(JalurMasuk.nama == "SNBP")
+    ).scalar_one()
+    db_session.add(
+        CalonMahasiswa(
+            nama_lengkap="Siti Aminah",
+            email="siti@example.com",
+            phone="081299988877",
+            tanggal_lahir=date(2006, 8, 17),
+            alamat="Jl. Asia Afrika",
+            program_studi_id=prodi_id,
+            jalur_masuk_id=jalur_id,
+            status=StatusPMB.approved,
+            nim="2025001-0099",
+            approved_at=datetime.now(timezone.utc),
+        )
+    )
+    db_session.commit()
+
+    mgr.add_course("2025001-0099", "IF101")
+    mgr.submit_krs("2025001-0099")
+    with pytest.raises(ForbiddenError):
+        mgr.approve_krs("2025001-0099", 101)
+
+    # Mahasiswa Budi (dosen_pa_id=101): status DRAFT di-approve oleh dosen PA benar -> 409 TransitionError
+    mgr.add_course(nim, "IF102")
+    v_draft = mgr.get_krs(nim).version
+    with pytest.raises(TransitionError):
+        mgr.approve_krs(nim, 101)
+
+    # Status SUBMITTED: dosen PA salah (999) wajib mendapat 403 Forbidden (bukan 409)
+    submitted = mgr.submit_krs(nim)
+    with pytest.raises(ForbiddenError, match="bukan dosen PA"):
+        mgr.approve_krs(nim, 999)
+    with pytest.raises(ForbiddenError, match="bukan dosen PA"):
+        mgr.revise_krs(nim, 999, "Bukan bimbingan saya")
+
+    # Optimistic locking expected_version basi -> 409 StaleVersionError
+    assert v_draft < submitted.version
+    with pytest.raises(StaleVersionError, match="muat ulang"):
+        mgr.approve_krs(nim, 101, expected_version=v_draft)
+    with pytest.raises(StaleVersionError, match="muat ulang"):
+        mgr.revise_krs(nim, 101, "Versi basi", expected_version=v_draft)
+
+    # Uji StaleDataError SQLAlchemy murni (version_id_col) via KRSManager pada 2 session konkuren
+    db_file = tmp_path / "stale_lock.db"
+    file_engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    attach_sqlite_fk_pragma(file_engine)
+    LocalSession = sessionmaker(
+        autocommit=False, autoflush=False, expire_on_commit=False, bind=file_engine
+    )
+    Base.metadata.create_all(bind=file_engine)
+
+    try:
+        with LocalSession() as setup_db:
+            seed_data(setup_db)
+            seed_krs_data(setup_db)
+            KRSManager(setup_db, semester="20251").add_course(nim, "IF102")
+
+        with LocalSession() as sess_a, LocalSession() as sess_b:
+            mgr_a = KRSManager(sess_a, semester="20251")
+            krs_a = mgr_a.get_krs(nim)
+            v_seen_a = krs_a.version
+            sess_a.commit()  # Lepas read lock SQLite, identity map tetap menyimpan version lama
+
+            # Session B diam-diam menambah MK dan menaikkan version di database
+            mgr_b = KRSManager(sess_b, semester="20251")
+            mgr_b.add_course(nim, "IF201")
+            assert mgr_b.get_krs(nim).version > v_seen_a
+
+            # Session A mencoba submit dengan entity ber-version basi -> StaleDataError -> StaleVersionError
+            with pytest.raises(StaleVersionError, match="muat ulang"):
+                mgr_a.submit_krs(nim)
+    finally:
+        file_engine.dispose()
+
+
+def test_approve_dan_revise_rollback_atomik_saat_commit_gagal(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Jika commit gagal di tengah jalan, status KRS, log, dan notifikasi wajib rollback utuh."""
+    nim = _setup_krs_sample_db(db_session)
+    mgr = KRSManager(db_session, semester="20251")
+    mgr.add_course(nim, "IF102")
+    krs_sub = mgr.submit_krs(nim)
+
+    def gagal_commit() -> None:
+        raise RuntimeError("Simulasi kegagalan commit database")
+
+    monkeypatch.setattr(db_session, "commit", gagal_commit)
+    with pytest.raises(RuntimeError, match="Simulasi kegagalan"):
+        mgr.approve_krs(nim, 101)
+    with pytest.raises(RuntimeError, match="Simulasi kegagalan"):
+        mgr.revise_krs(nim, 101, "Coba revisi")
+    monkeypatch.undo()
+
+    krs_after = mgr.get_krs(nim)
+    assert krs_after.status == KRSStatus.SUBMITTED
+    assert krs_after.approved_at is None
+    assert krs_after.catatan_revisi is None
+
+    logs = db_session.execute(
+        select(KRSLog).where(KRSLog.krs_id == krs_sub.id)
+    ).scalars().all()
+    assert [log.aksi for log in logs] == ["SUBMIT"]
+    assert db_session.execute(select(Notifikasi)).scalars().all() == []
+
+
+def test_krs_api_workflow_submit_approve_revise_403_409(
+    client: TestClient, db_session: Session
+) -> None:
+    """Uji endpoint HTTP /submit, /approve, /revise untuk status 200, 400, 403, 404, dan 409."""
+    nim = _setup_krs_sample_db(db_session)
+
+    # Submit KRS belum ada -> 404
+    assert client.post(f"/api/krs/{nim}/submit?semester=20251").status_code == 404
+
+    # Tambah MK dan submit -> 200 SUBMITTED
+    assert client.post(f"/api/krs/{nim}/courses?semester=20251", json={"kode_mk": "IF102"}).status_code == 201
+    res_sub1 = client.post(f"/api/krs/{nim}/submit?semester=20251")
+    assert res_sub1.status_code == 200
+    v_sub1 = res_sub1.json()["version"]
+
+    # Dosen PA salah -> 403 Forbidden
+    res_403 = client.post(
+        f"/api/krs/{nim}/approve?semester=20251",
+        json={"dosen_pa_id": 888, "expected_version": v_sub1},
+    )
+    assert res_403.status_code == 403
+    assert "bukan dosen PA" in res_403.json()["detail"]
+
+    # Revisi dengan catatan kosong -> 400
+    assert (
+        client.post(
+            f"/api/krs/{nim}/revise?semester=20251",
+            json={"dosen_pa_id": 101, "catatan": "   "},
+        ).status_code
+        == 400
+    )
+
+    # Revisi oleh PA benar -> 200 REVISION
+    res_rev = client.post(
+        f"/api/krs/{nim}/revise?semester=20251",
+        json={"dosen_pa_id": 101, "catatan": "Tambah IF201", "expected_version": v_sub1},
+    )
+    assert res_rev.status_code == 200
+    v_rev = res_rev.json()["version"]
+    assert res_rev.json()["catatan_revisi"] == "Tambah IF201"
+
+    # Tambah IF201 -> submit ulang -> versi naik -> expected_version lama ditolak 409 Conflict
+    assert client.post(f"/api/krs/{nim}/courses?semester=20251", json={"kode_mk": "IF201"}).status_code == 201
+    res_sub2 = client.post(f"/api/krs/{nim}/submit?semester=20251")
+    assert res_sub2.status_code == 200
+    v_sub2 = res_sub2.json()["version"]
+    assert v_sub2 > v_rev
+
+    res_stale = client.post(
+        f"/api/krs/{nim}/approve?semester=20251",
+        json={"dosen_pa_id": 101, "expected_version": v_rev},
+    )
+    assert res_stale.status_code == 409
+    assert "muat ulang" in res_stale.json()["detail"]
+
+    # Approve dengan versi terbaru -> 200 APPROVED
+    res_ok = client.post(
+        f"/api/krs/{nim}/approve?semester=20251",
+        json={"dosen_pa_id": 101, "expected_version": v_sub2},
+    )
+    assert res_ok.status_code == 200
+    assert res_ok.json()["status"] == "APPROVED"
+    assert res_ok.json()["approved_at"] is not None
+
+    # Submit atau revise ulang setelah APPROVED -> 409 Conflict
+    assert client.post(f"/api/krs/{nim}/submit?semester=20251").status_code == 409
+    assert (
+        client.post(
+            f"/api/krs/{nim}/revise?semester=20251",
+            json={"dosen_pa_id": 101, "catatan": "Sudah approved"},
+        ).status_code
+        == 409
+    )
+
+
+def test_krs_recommender_csp_wajib_conflict_dan_prasyarat(
+    client: TestClient, db_session: Session
+) -> None:
+    """Uji CSP recommender: prioritaskan MK wajib, hindari bentrok/prasyarat gagal, <= max_sks."""
+    nim = _setup_krs_sample_db(db_session)
+    recommender = KRSRecommender()
+
+    # IF201 (Senin 08:00-10:30) dan IF202 (Senin 09:00-11:00) bentrok.
+    # IF202 wajib -> harus menang atas IF201 pilihan!
+    # MA102 & IF203 gagal prasyarat -> harus masuk daftar ditolak.
+    res = recommender.recommend(
+        db_session,
+        nim=nim,
+        semester="20251",
+        wajib=["IF202", "IF102"],
+        pilihan=["IF201", "MA102", "IF203", "IF204"],
+        max_sks=24,
+    )
+    kode_terpilih = {mk.kode_mk for mk in res.selected}
+    assert {"IF202", "IF102", "IF204"}.issubset(kode_terpilih)
+    assert "IF201" not in kode_terpilih
+    assert res.total_sks <= 24
+    assert set(res.wajib_terpilih) == {"IF202", "IF102"}
+    assert "Kalkulus I" in res.ditolak["MA102"]
+    assert "Struktur Data" in res.ditolak["IF203"]
+    assert "bentrok" in res.ditolak["IF201"].lower()
+
+    # Batas SKS sempit (max_sks=10) via REST endpoint tanpa list eksplisit (pakai seluruh katalog DB)
+    api_res = client.post(
+        f"/api/krs/{nim}/recommend?semester=20251",
+        json={"max_sks": 10},
+    )
+    assert api_res.status_code == 200
+    body = api_res.json()
+    assert 1 <= body["total_sks"] <= 10
+    assert "MA102" in body["ditolak"]
+    assert "IF203" in body["ditolak"]
+
+    # Error handling: NIM/MK tidak ditemukan -> 404, max_sks tidak valid -> 400
+    assert (
+        client.post(f"/api/krs/9999999-9999/recommend?semester=20251", json={}).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/krs/{nim}/recommend?semester=20251",
+            json={"wajib": ["TIDAKADA"]},
+        ).status_code
+        == 404
+    )
+    with pytest.raises(KRSValidasiGagal):
+        recommender.recommend(db_session, nim=nim, max_sks=30)

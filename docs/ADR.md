@@ -117,3 +117,36 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
      Atribut jadwal (`hari`, `jam_mulai`, `jam_selesai`) disimpan sementara di tabel `matakuliah` (asumsi 1 MK = 1 kelas) agar rantai validasi dan query prasyarat fokus diuji pada Minggu 5–6, dan siap diekstrak ke tabel `kelas`/`jadwal` terpisah pada modul penjadwalan berikutnya.
 - **Konsekuensi & Pertimbangan:**  
   - Lima pasangan kasus bentrok/bersambung dan perbandingan nilai `'A'..'E'` dapat diuji deterministik dan terbukti berjalan memakai indeks tanpa *full table scan* lewat `EXPLAIN QUERY PLAN` di [docs/EXPLAIN_PRASYARAT.md](EXPLAIN_PRASYARAT.md).
+
+---
+
+## ADR-008: Enkapsulasi State Machine Sendiri (`TRANSITIONS` Dict) dan Strategi Optimistic + Pessimistic Locking
+
+- **Status:** Diterima (Minggu 6)
+- **Konteks:**  
+  Siklus pengisian KRS memiliki 4 status (`DRAFT`, `SUBMITTED`, `APPROVED`, `REVISION`) dan 2 aktor (`MAHASISWA`, `DOSEN_PA`). Diperlukan pilihan apakah memakai library pihak ketiga (`transitions` / `python-statemachine`) atau tabel transisi eksplisit sendiri, serta bagaimana mencegah *race condition* ketika mahasiswa mengedit KRS bersamaan dengan Dosen PA yang sedang membuka layar persetujuan (*"tab lama menyetujui KRS yang diam-diam baru diubah mahasiswa"*).
+- **Keputusan:**  
+  1. **Tabel Transisi Eksplisit Sendiri (`TRANSITIONS` Dict + `KRS.transition()`):**  
+     Dengan hanya 4 status dan 4 transisi sah dari 32 kombinasi `(status_awal, aktor, status_tujuan)`, kamus `TRANSITIONS` di [app/models/krs.py](../app/models/krs.py) jauh lebih transparan, nol dependensi eksternal, mudah diaudit saat *code review*, dan dapat dienkapsulasi penuh lewat `cek_transisi()` dan `transition()` tanpa membiarkan layer service/router menulis `krs.status = ...` secara langsung. Bila di semester lanjut jumlah state melebihi ~10–15 dengan sub-state hierarkis, barulah migrasi ke library `python-statemachine` dipertimbangkan.
+  2. **Otorisasi Dua Lapis (`403 Forbidden` vs `409 Conflict`):**  
+     Lapis 1 (peran pada tabel `TRANSITIONS`) dan transisi status ilegal/versi basi dipetakan ke **`409 Conflict`**, sedangkan Lapis 2 (kepemilikan `krs.dosen_pa_id == dosen_pa_id`) dipetakan secara eksplisit ke **`403 Forbidden`** lewat hierarki exception polimorfik `KRSError`.
+  3. **Kombinasi *Pessimistic* (`FOR UPDATE` / `BEGIN IMMEDIATE`) + *Optimistic Locking* (`version` + `expected_version`):**  
+     Operasi tulis menggunakan `with_for_update()` (dan `BEGIN IMMEDIATE` di SQLite) untuk mengisolasi transaksi paralel pendek, sementara header `KRS` memakai kolom `version` dengan `__mapper_args__ = {"version_id_col": version}` (ditambah sentuhan ketat `diubah_pada` setiap `add_course`/`remove_course`) serta parameter `expected_version` agar aksi Dosen PA yang datang dari layar lama ditolak dengan HTTP `409 StaleVersionError` (*"KRS sudah berubah, muat ulang"*).
+- **Konsekuensi & Pertimbangan:**  
+  - Keseluruhan 28 kombinasi transisi ilegal terverifikasi otomatis lewat `@pytest.mark.parametrize` tanpa mengimpor `TRANSITIONS` ke definisi oracle test.
+  - Seluruh efek samping `approve_krs` dan `revise_krs` (perubahan status, timestamp/catatan, `krs_log`, dan `notifikasi`) berjalan dalam satu *Unit of Work* (`db.commit()` tunggal) dan terbukti melakukan *rollback* utuh bila commit gagal.
+
+---
+
+## ADR-009: Rekomendasi Paket KRS Berbasis CSP Backtracking + Mandatory Validator Guardrail
+
+- **Status:** Diterima (Minggu 6 — Tantangan Opsional)
+- **Konteks:**  
+  Sistem memerlukan fitur rekomendasi kombinasi mata kuliah (`POST /api/krs/{nim}/recommend`) yang memaksimalkan terpenuhinya mata kuliah wajib serta total SKS tanpa melanggar aturan prasyarat, bentrok jadwal, maupun batas maksimal 24 SKS. Mengingat kendala utama bersifat deterministik dan kombinatorial dengan jumlah kandidat per semester yang relatif kecil (~10–20 MK), pemilihan algoritma solver dan jaminan kepatuhan aturan menjadi krusial.
+- **Keputusan:**  
+  1. **CSP *Backtracking* dengan *Branch-and-Bound Pruning*:**  
+     Diimplementasikan di [app/services/krs_recommender.py](../app/services/krs_recommender.py). Solver terlebih dahulu menyaring prasyarat lewat query `prasyarat_belum_lulus()`, mengurutkan MK wajib dan SKS besar di depan, lalu mencari himpunan bagian yang memaksimalkan `(jumlah_wajib_terpilih, total_sks)` subject to `total_sks <= max_sks` dan bebas irisan jadwal `bentrok()`.
+  2. **Prinsip Guardrail Deterministik (*"Solver Menyampaikan Saran, Validator yang Memutuskan"*):**  
+     Setiap kombinasi keluaran solver **wajib** diputar ulang melalui rantai `build_chain(default_krs_validators())` (`Duplicate -> SKS -> Prerequisite -> Conflict`) sebelum dikembalikan ke pengguna.
+- **Konsekuensi & Pertimbangan:**  
+  - Menjamin hasil rekomendasi deterministik, dapat dijelaskan per mata kuliah (`ditolak` berisi alasan spesifik prasyarat/bentrok/SKS), bebas halusinasi LLM, serta siap dihubungkan dengan agen AI penjelas tanpa risiko melanggar aturan akademik.
