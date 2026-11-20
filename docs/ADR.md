@@ -150,3 +150,61 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
      Setiap kombinasi keluaran solver **wajib** diputar ulang melalui rantai `build_chain(default_krs_validators())` (`Duplicate -> SKS -> Prerequisite -> Conflict`) sebelum dikembalikan ke pengguna.
 - **Konsekuensi & Pertimbangan:**  
   - Menjamin hasil rekomendasi deterministik, dapat dijelaskan per mata kuliah (`ditolak` berisi alasan spesifik prasyarat/bentrok/SKS), bebas halusinasi LLM, serta siap dihubungkan dengan agen AI penjelas tanpa risiko melanggar aturan akademik.
+
+---
+
+## ADR-010: Model Domain 4 Entitas Penjadwalan, `krs_detail.kelas_id`, Pola *Expand-Contract*, dan Kontrak HTTP `422`
+
+- **Status:** Diterima (Minggu 7)
+- **Konteks:**  
+  Pada Modul KRS (Minggu 5–6), jadwal kuliah (`hari`, `jam_mulai`, `jam_selesai`) masih disederhanakan langsung di tabel `matakuliah` (ADR-007: asumsi 1 MK = 1 kelas, tanpa ruangan maupun dosen). Asumsi ini tidak mampu memodelkan kelas paralel (mis. Basis Data A dan Basis Data B), satu kelas dengan lebih dari satu sesi mingguan (mis. teori Senin di ruang kelas dan praktikum Kamis di laboratorium), maupun bentrok ruangan dan dosen pengampu. Di sisi lain, penghapusan langsung kolom jadwal di `matakuliah` akan memutus 83 pengujian Modul PMB & KRS yang sudah ada, serta terdapat perbedaan kontrak status HTTP validasi Pydantic antara `/api/pmb` & `/api/krs` (`400` sesuai ADR-003) dengan `/api/jadwal` (`422` sesuai spesifikasi Minggu 7 untuk kesalahan format seperti `jam_mulai >= jam_selesai`).
+- **Keputusan:**  
+  1. **Pemisahan 4 Entitas Baru (`app/models/jadwal.py`, migrasi `0005`):**  
+     Menambahkan tabel `ruangan` (`kode` PK, `kapasitas >= 1`), `dosen` (`id` PK, `nidn` UNIQUE, `nama`), `kelas` (`id` PK, FK `kode_mk`, `nama`, `kuota >= 1`, `semester`, `UNIQUE(kode_mk, nama, semester)`), dan `jadwal` (`id` PK, FK `kelas_id`, `hari 1..6`, `jam_mulai < jam_selesai` bertipe `TIME`, FK `ruangan_kode`, FK `dosen_id`, beserta index komposit `ix_jadwal_ruang(hari, ruangan_kode)` dan `ix_jadwal_dosen(hari, dosen_id)`).
+  2. **Pola *Expand-Contract* pada `matakuliah` & `krs_detail`:**  
+     Kolom `hari`, `jam_mulai`, dan `jam_selesai` pada `matakuliah` dipertahankan sementara agar seluruh API dan pengujian KRS Minggu 5–6 tetap berjalan tanpa regresi, sembari menambahkan kolom nullable `krs_detail.kelas_id` (FK -> `kelas.id`, terindeks) untuk menghitung mahasiswa terdaftar (`COUNT`) saat pemeriksaan kapasitas dan menjadi jembatan integrasi penuh invalidasi KRS pada Minggu 8.
+  3. **Kontrak HTTP `422` Khusus `/api/jadwal`:**  
+     Memperbarui handler `RequestValidationError` di [app/main.py](../app/main.py) agar rute berawalan `/api/jadwal` mengembalikan `422 Unprocessable Entity` untuk payload invalid (`jam_mulai >= jam_selesai`, `hari` di luar `1..6`, `ruangan_kode` kosong), sedangkan `/api/pmb/*` dan `/api/krs/*` tetap mengembalikan `400 Bad Request`. Error bisnis domain jadwal dibungkus melalui hierarki polimorfik `ScheduleError` (`NotFoundError -> 404`, `CapacityError -> 409`, `ScheduleConflictError -> 409` lengkap dengan field `conflicts`).
+- **Konsekuensi & Pertimbangan:**  
+  - Tipe `datetime.time` pada model ORM dan skema Pydantic mencegah bug perbandingan string leksikografis seperti `"9:00" < "10:00" -> False`.
+  - Transisi penuh KRS ke `kelas_id` (fase *contract*) dijadwalkan pada integrasi Minggu 8 bersama Observer invalidasi KRS.
+
+---
+
+## ADR-011: Pemilihan *Grouping + Sort & Sweep* dan Penundaan *Interval Tree* dengan Bukti Benchmark
+
+- **Status:** Diterima (Minggu 7)
+- **Konteks:**  
+  Dokumen tugas Langkah 1 menyebutkan *"Optimize dengan interval tree untuk jam overlap check"* untuk fungsi `detect_schedule_conflict`. Implementasi *Interval Tree* penuh menambah kompleksitas kode dan/atau dependensi eksternal (`intervaltree`), sehingga perlu dinilai apakah struktur pohon tersebut memang memberikan keuntungan nyata dibandingkan algoritma *Grouping + Sort & Sweep* pada ukuran data kampus SEVIMA-Mini.
+- **Keputusan:**  
+  1. Mempertahankan dua implementasi di [app/services/conflict.py](../app/services/conflict.py): `detect_naive()` ($O(n^2)$ berbasis `itertools.combinations`) sebagai acuan kebenaran untuk *differential testing*, dan `detect_schedule_conflict()` memakai **Grouping + Sort & Sweep** ($O(n \log n + k)$) untuk produksi.
+  2. Menunda adopsi *Interval Tree* hingga beban data benar-benar membutuhkannya, berdasarkan analisis ukuran masalah dan benchmark aktual berikut:
+
+| Skenario | Ukuran Data | Rata-rata Waktu Eksekusi (`seed=42`, 10x) | Keputusan Algoritma |
+| :--- | :--- | :--- | :--- |
+| Satu kampus, satu semester (padat: 12 ruang, 16 dosen, 6 hari) | `n = 600` jadwal (`1167` konflik) | Naif: `25.94 ms` vs Sweep: **`2.84 ms`** (~9.1x lebih cepat) | **Grouping + Sort & Sweep** memadai |
+| Satu kampus, satu semester (menyebar: 30 ruang, 40 dosen, 6 hari) | `n = 600` jadwal (`455` konflik) | Naif: `39.61 ms` vs Sweep: **`2.40 ms`** (~16.5x lebih cepat) | **Grouping + Sort & Sweep** memadai |
+| Satu ruangan pada satu hari | `6–8` jadwal | `< 0.1 ms` (termasuk overhead loop Python) | Apa pun memadai |
+| Cek 1 jadwal baru saat `POST`/`PUT` | `1` vs tabel `jadwal` | Query SQL terindeks (`ix_jadwal_ruang`, `ix_jadwal_dosen`) | Query DB berindeks |
+| Sistem booking ruang multi-tahun / solver ribuan kandidat per detik | `10^4+` kueri rentang dinamis | — | **Interval Tree** baru layak |
+
+- **Konsekuensi & Pertimbangan:**  
+  - Interval waktu dimodelkan setengah-terbuka `[jam_mulai, jam_selesai)` dengan operator `<` (bukan `<=`), dan kondisi aktif pada *sweep* memakai `x.jam_selesai > j.jam_mulai` (bukan `>=`), sehingga kuliah bersambung tepat (mis. `08:00–09:40` dan `09:40–11:20`) di ruangan dan dosen yang sama sah.
+  - Baik `detect_naive` maupun `detect_schedule_conflict` hanya melaporkan dua tipe konflik (`"room_conflict"` dan `"lecturer_conflict"`); irisan jam pada ruangan dan dosen yang berbeda adalah kondisi normal, sedangkan satu pasangan yang melanggar keduanya tetap dilaporkan dua kali (sekali per tipe) tanpa duplikasi `(A, B)` / `(B, A)`.
+  - Keputusan ini dibuktikan ekuivalen oleh *differential property-based test* Hypothesis (`test_sweep_sama_dengan_naif`, 500 contoh acak) dan siap diganti ke *Interval Tree* bila kelak muncul kebutuhan kueri rentang dinamis $10^4+$ per detik.
+
+---
+
+## ADR-012: Strategi *Capacity Check* `max(kuota, terdaftar)` dan Penguncian Baris Berurutan Anti-Deadlock
+
+- **Status:** Diterima (Minggu 7)
+- **Konteks:**  
+  Pada awal semester ketika admin menyusun jadwal kuliah, mahasiswa belum mengisi KRS sehingga jumlah baris `krs_detail` untuk suatu kelas bernilai `0`. Jika `cek_kapasitas` hanya menghitung `COUNT(krs_detail)`, kelas berkuota `50` akan lolos dimasukkan ke ruang berkapasitas `30` lalu gagal saat pengisian KRS. Selain itu, operasi `create`/`update` jadwal oleh dua admin secara bersamaan pada ruang atau jam yang sama rentan terhadap *race condition* (TOCTOU: keduanya membaca database kosong, lalu keduanya menyimpan jadwal bentrok), dan penguncian dua tabel (`ruangan` dan `dosen`) tanpa urutan tetap berisiko menimbulkan *deadlock*.
+- **Keputusan:**  
+  1. **Pemeriksaan Kapasitas Ganda (`max(kelas.kuota, terdaftar)`):**  
+     Fungsi `cek_kapasitas()` di [app/services/scheduling_service.py](../app/services/scheduling_service.py) menghitung jumlah pendaftar aktual dari `krs_detail.kelas_id` lalu membandingkan `max(kelas.kuota, terdaftar) > ruang.kapasitas`, dengan operator `>` (kapasitas tepat sama, misalnya `40 == 40`, tetap diizinkan).
+  2. **Penguncian Pesimis Berurutan Tetap (`Ruangan` lalu `Dosen`) & Anti-Autoflush:**  
+     `SchedulingService._kunci()` selalu mengunci baris `Ruangan` lebih dulu lalu baris `Dosen` dengan `SELECT ... FOR UPDATE` (`with_for_update()`), dan pada SQLite memulai transaksi tulis eksplisit `BEGIN IMMEDIATE` (sebelum membaca baris apa pun, termasuk sebelum `db.get()` pada `update()` dan `delete()`) disertai `PRAGMA busy_timeout=30000` dan retry hingga 3x untuk `OperationalError` sementara. Objek `Jadwal` baru hanya ditambahkan lewat `db.add(jadwal)` paling akhir sebelum `db.commit()` agar mekanisme *autoflush* SQLAlchemy tidak membaca jadwal baru sebelum validasi bentrok selesai.
+- **Konsekuensi & Pertimbangan:**  
+  - Penguncian baris berurutan konsisten mencegah *deadlock* siklus antar dua transaksi konkuren pada DBMS *client-server* (MySQL InnoDB/PostgreSQL), dan skenario balapan dua admin di ruang dan jam sama teruji pada file SQLite temporer (`test_scheduling_concurrency_dua_admin_satu_ruangan`: tepat 1 sukses dan 1 `ScheduleConflictError`).
+  - Sama seperti ADR-004 dan ADR-008, karena SQLite mengabaikan klausa `FOR UPDATE` dan mengandalkan kunci tulis level berkas (`BEGIN IMMEDIATE`), pembuktian *row-level lock* spesifik ruangan/dosen pada konkurensi tinggi tetap memerlukan verifikasi di MySQL InnoDB atau PostgreSQL pada tahap deploy.

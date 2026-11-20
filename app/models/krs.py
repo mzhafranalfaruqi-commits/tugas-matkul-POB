@@ -157,6 +157,9 @@ class KRSDetail(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     krs_id: Mapped[int] = mapped_column(ForeignKey("krs.id", ondelete="CASCADE"))
     kode_mk: Mapped[str] = mapped_column(String(10), ForeignKey("matakuliah.kode_mk"))
+    kelas_id: Mapped[int | None] = mapped_column(
+        ForeignKey("kelas.id"), default=None, index=True
+    )
     nilai: Mapped[str | None] = mapped_column(
         String(2), ForeignKey("skala_nilai.huruf"), default=None
     )

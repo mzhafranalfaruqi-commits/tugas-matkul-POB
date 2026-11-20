@@ -1,4 +1,10 @@
-"""Domain exception untuk alur bisnis Modul PMB dan Modul KRS."""
+"""Domain exception untuk alur bisnis Modul PMB, Modul KRS, dan Modul Jadwal."""
+
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.services.conflict import Conflict
 
 
 class EmailSudahTerdaftar(Exception):
@@ -65,3 +71,39 @@ class StaleVersionError(KRSError):
 
 # Alias kompatibilitas untuk modul/pengujian Minggu 5
 KRSStatusTidakValid = KRSLockedError
+
+
+class ScheduleError(Exception):
+    """Base domain exception untuk pelanggaran aturan pada Modul Jadwal & Ruangan."""
+
+    status_code: int = 400
+
+    def body(self) -> dict[str, Any]:
+        """Mengembalikan payload JSON standar untuk handler exception FastAPI."""
+        return {"detail": str(self)}
+
+
+class NotFoundError(ScheduleError):
+    """Dilempar ketika ruangan, kelas, dosen, atau jadwal tidak ditemukan (HTTP 404)."""
+
+    status_code = 404
+
+
+class CapacityError(ScheduleError):
+    """Dilempar ketika kuota/peserta kelas melebihi kapasitas ruangan (HTTP 409)."""
+
+    status_code = 409
+
+
+class ScheduleConflictError(ScheduleError):
+    """Dilempar ketika jadwal yang disimpan bentrok ruangan atau dosen (HTTP 409)."""
+
+    status_code = 409
+
+    def __init__(self, konflik: list["Conflict"]) -> None:
+        super().__init__(f"Jadwal bentrok ({len(konflik)} konflik)")
+        self.konflik = konflik
+
+    def body(self) -> dict[str, Any]:
+        """Menyertakan daftar detail konflik agar frontend/admin dapat menindaklanjuti."""
+        return super().body() | {"conflicts": [asdict(k) for k in self.konflik]}
