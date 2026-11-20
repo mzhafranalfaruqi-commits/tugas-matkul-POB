@@ -1,11 +1,11 @@
 # AI Usage Log — Implementasi Modul PMB SEVIMA-Mini (Minggu 3–4)
 
-Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, pembuatan generator NIM *thread-safe*, hingga penyusunan unit test, beserta hasil evaluasi kritis terhadap setiap output AI.
+Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, perbaikan arsitektur NIM generator berbasis database lock pada Minggu 4, hingga penyusunan unit test dan evaluasi kritisnya. Versi terstruktur sesuai format silabus + kerangka **OPAR** (*Observe, Plan, Act, Reflect*) tersedia lengkap pada [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
 
 ## Kepatuhan AI-First Charter
 
 1. **Perlindungan Data Pribadi (PII):** Seluruh prompt, fixture pengujian, dan contoh skema menggunakan data *dummy* fiktif (seperti `"Budi Santoso"`, `"budi1@example.com"`, `"081234567890"`). Tidak ada data pribadi mahasiswa asli yang dikirim ke layanan AI.
-2. **Prinsip Validasi:** Tidak ada kode hasil generasi AI yang langsung disalin tanpa ditinjau, disesuaikan dengan versi pustaka terbaru (SQLAlchemy 2.0, Pydantic v2), dan diuji dengan Alembic serta `pytest`.
+2. **Prinsip Validasi:** Tidak ada kode hasil generasi AI yang langsung disalin tanpa ditinjau, diperiksa kesesuaian arsitekturnya, disesuaikan dengan pustaka target (SQLAlchemy 2.0, Pydantic v2), dan diuji melalui Alembic serta `pytest`.
 
 ---
 
@@ -13,51 +13,34 @@ Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema dat
 
 | Sesi | Tahap Tugas | Tools AI | Masalah / Temuan Kritis pada Output AI | Keputusan Mahasiswa |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Skema Database & Migrasi Alembic | Mistral (HF Inference) | Prompt awal tugas lupa mendeskripsikan tabel `jalur_masuk`, AI cenderung pakai gaya lama `declarative_base()`, mengusulkan `REGEXP` di SQLite, dan melewatkan `PRAGMA foreign_keys=ON`. | Merevisi prompt dengan gaya SQLAlchemy 2.0 `Mapped`, memisahkan `jalur_masuk` menjadi tabel FK, memakai `create_constraint=True`, serta menyalakan pragma FK SQLite. |
-| 2 | REST API & Validasi Input | Mistral & Codeium | Default FastAPI memunculkan HTTP `422` untuk error Pydantic, sedangkan rubrik uji membutuhkan `400`; selain itu response awal sempat berisiko mengembalikan field sensitif (`alamat`, `tanggal_lahir`). | Menambahkan exception handler `RequestValidationError` → `400`, memisahkan skema `RegisterRequest` dan `PendaftarOut`, serta memetakan `IntegrityError` ke `409 Conflict`. |
-| 3 | Thread-Safe NIM Generator | Mistral (HF Inference) | Implementasi awal hanya mengandalkan `MAX(nim) + 1` tanpa lock atau baru mengunci di dalam `generate_nim()` saja (sehingga celah *race condition* tetap muncul sebelum `commit()` di service). | Memindahkan `threading.RLock()` hingga mencakup siklus baca-generate-commit di `approve()`, menambahkan `with_for_update()` pada `ProgramStudi` untuk MySQL/PostgreSQL, dan constraint `UNIQUE` + retry. |
-| 4 | Strategi Pengujian `pytest` | Codeium & Mistral | Tes awal hanya memakai happy path dan belum menguji constraint SQLite secara langsung maupun simulasi eksekusi paralel (`ThreadPoolExecutor`). | Menambahkan fixture in-memory `StaticPool` dengan FK aktif, tes parametrik format HP/email, tes idempotency, tes concurrency multi-thread pada file DB sementara, dan tes constraint DB langsung. |
+| 1 | Skema Database & Migrasi Alembic (`0001`) | Mistral (HF Inference) | Prompt awal tugas lupa mendeskripsikan tabel `jalur_masuk`, AI cenderung pakai gaya lama `declarative_base()`, mengusulkan `REGEXP` di SQLite, dan melewatkan `PRAGMA foreign_keys=ON`. | Merevisi prompt ke SQLAlchemy 2.0 `Mapped`, memisahkan `jalur_masuk` menjadi tabel FK, memakai `create_constraint=True`, serta menyalakan pragma FK SQLite. |
+| 2 | REST API & Validasi Input | Mistral & Codeium | Default FastAPI memunculkan HTTP `422` untuk error Pydantic, sedangkan rubrik uji membutuhkan `400`; respons awal sempat berisiko mengembalikan field sensitif (`alamat`, `tanggal_lahir`). | Menambahkan exception handler `RequestValidationError` → `400`, memisahkan `RegisterRequest` dan `PendaftarOut`, serta memetakan `IntegrityError` ke `409 Conflict`. |
+| 3 | Pembaruan Minggu 4: `PMBService`, `409 Conflict`, & NIM Generator Anti Race Condition | Mistral & Antigravity | Output awal Minggu 3 memakai `threading.RLock()` dan `MAX(nim) + 1`, padahal lock Python gagal di lingkungan multi-worker/multi-server; status conflict `rejected -> approve` sempat disamakan ke `400`. | **Menghapus `threading.Lock()`**, menambah tabel `nim_counter` (`0002_tabel_nim_counter.py`), memakai `with_for_update()` + `BEGIN IMMEDIATE` + `db.flush()` + `UNIQUE` + retry, memecah `format_nim()`, dan memetakan konflik status ke **`409 Conflict`**. |
+| 4 | Strategi Pengujian `pytest` & OpenAPI Docs | Codeium & Antigravity | Tes awal belum menguji fungsi murni `format_nim()` tanpa DB, overflow batas `9999`, atomicity rollback bila commit gagal, race condition idempotency pada ID yang sama, maupun kode `400` untuk kode prodi tidak valid. | Menambahkan tes unit murni `format_nim()`, tes overflow & atomicity rollback, tes paralel 5 pendaftar + 2 thread idempotency pada file DB sementara, tes `400`/`409` pada approve/reject, dan validasi schema `/openapi.json` serta `/redoc`. |
 
 ---
 
-## Detail Prompt & Evaluasi Kritis
+## Detail Prompt Terbaik & Evaluasi Kritis
 
-### Sesi 1 — Perancangan Skema Database & Migrasi Alembic
+### Prompt Terbaik 1 — Skema SQLAlchemy 2.0 & Migrasi Rollback Aman
+> "Desain skema database PMB untuk sistem akademik menggunakan SQLAlchemy 2.0 (`DeclarativeBase`, `Mapped`, `mapped_column`) dengan tabel `program_studi`, `jalur_masuk`, `calon_mahasiswa`, dan `nim_counter` (`tahun`, `kode_prodi`, `last_number`). Sertakan migrasi Alembic `upgrade()` dan `downgrade()` yang aman terhadap urutan foreign key, dan jelaskan constraint yang ditegakkan di DB vs Pydantic."
 
-- **Prompt Awal (dari modul tugas, dikritisi sebelum dipakai):**  
-  Prompt pada modul menuliskan `jalur_masuk (SNBP/SNBT/Mandiri)` sebagai kolom, padahal deliverable tugas mewajibkan 3 tabel: `calon_mahasiswa`, `program_studi`, dan `jalur_masuk`. Selain itu tidak ada penyebutan versi SQLAlchemy 2.0.
-- **Prompt Revisi (Prompt Terbaik Sesi 1):**
-  > "Desain skema database PMB untuk sistem akademik menggunakan SQLAlchemy 2.0 (`DeclarativeBase`, `Mapped`, `mapped_column`) dengan 3 tabel: `program_studi` (id, kode 3 char unique, nama, fakultas), `jalur_masuk` (id, nama unique), dan `calon_mahasiswa` (id, nama_lengkap, email unique + index, phone string 15, tanggal_lahir, alamat, `program_studi_id` FK, `jalur_masuk_id` FK, status enum `pending`/`approved`/`rejected` dengan `create_constraint=True`, nim nullable unique, `created_at` server_default now, `approved_at` nullable). Sertakan skrip migrasi Alembic dengan `upgrade()` dan `downgrade()` yang memperhatikan urutan foreign key, serta jelaskan constraint mana yang ditegakkan di DB dan di Pydantic."
-- **Hasil Verifikasi:**  
-  - Tipe kolom `phone` dipastikan memakai `String(15)` (bukan `Integer` agar angka `0` di depan dan tanda `+62` tidak hilang).
-  - SQLite tidak mendukung `REGEXP` bawaan pada `CHECK constraint`, sehingga pola regex nomor HP Indonesia (`^(\+62|62|0)8[1-9][0-9]{6,10}$`) diletakkan di Pydantic, sedangkan SQLite menegakkan `length(phone) BETWEEN 9 AND 15`, `email LIKE '%_@%_._%'`, `NOT NULL`, `UNIQUE`, enum `CHECK`, dan `FOREIGN KEY` (dengan `PRAGMA foreign_keys=ON`).
-  - Urutan `downgrade()` diuji untuk menghapus `calon_mahasiswa` terlebih dahulu sebelum `jalur_masuk` dan `program_studi`.
+- **Evaluasi Kritis:** Memastikan kolom `phone` bertipe `String(15)` (bukan `Integer`), `PRAGMA foreign_keys=ON` aktif di SQLite, dan `create_constraint=True` dipasang pada `Enum` status agar constraint tersimpan eksplisit di skema DB.
 
-### Sesi 2 — Implementasi Endpoint FastAPI & Error Handling
+### Prompt Terbaik 2 — Endpoint OOP `PMBService` & Kontrak HTTP Code
+> "Refaktor service layer menjadi kelas OOP `PMBService` dan router tipis `/api/pmb/*` lengkap dengan anotasi OpenAPI `responses={...}`. Pisahkan HTTP status code pada `PUT /approve/{id}` dan `PUT /reject/{id}`: `404` bila ID tidak ada, `409 Conflict` bila konflik status (`StatusTidakValid`: bukan `pending` atau sudah `approved` saat reject), dan `400` bila data tidak valid untuk NIM (`DataNIMTidakValid`)."
 
-- **Prompt Terbaik Sesi 2:**
-  > "Dengan model SQLAlchemy `app/models/pmb.py` dan skema Pydantic v2 `app/schemas/pmb.py` terlampir, buat struktur terpisah `app/services/pmb_service.py` dan router tipis `app/routers/pmb.py` untuk endpoint `/api/pmb/register` (201), `/api/pmb/status/{id}` (200/404), `/api/pmb/approve/{id}` (200/400/404), `/api/pmb/reject/{id}` (200/400/404), dan `/api/pmb/stats` (200). Gunakan dependency injection `Depends(get_db)`. Tangani duplicate email menjadi `409 Conflict` termasuk fallback `IntegrityError`, referensi prodi/jalur tidak valid menjadi `400`, dan ubah `RequestValidationError` FastAPI menjadi `400 Bad Request`."
-- **Hasil Verifikasi:**  
-  - Pemisahan router dan service (*Single Responsibility Principle*) membuat logika bisnis mudah diuji tanpa harus selalu menembak HTTP.
-  - Email dinormalisasi menjadi huruf kecil di validator Pydantic sehingga `BUDI1@Example.COM` dan `budi1@example.com` tetap terdeteksi sebagai duplikat.
-  - Respons error validasi tervalidasi mengembalikan kode `400` dan pesan ramah tanpa membocorkan *stack trace* internal.
+- **Evaluasi Kritis:** Mencegah pencampuran kesalahan validasi payload (`400`) dengan pelanggaran alur status (`409`), sekaligus mendokumentasikan setiap skenario respons di Swagger UI `/docs` dan ReDoc `/redoc`.
 
-### Sesi 3 — Implementasi Generator NIM Thread-Safe & Idempotent
+### Prompt Terbaik 3 — NIM Generator Tanpa `threading.Lock()` (Database-Level Locking)
+> "Refactor `generate_nim(tahun, kode_prodi, db)` agar tidak menggunakan `threading.Lock()` atau `MAX(nim) + 1`. Gunakan tabel `nim_counter` dengan `with_for_update()` untuk MySQL/PostgreSQL serta `BEGIN IMMEDIATE` dan `PRAGMA busy_timeout` untuk SQLite. Pastikan `generate_nim()` hanya memanggil `db.flush()` (bukan `db.commit()`), terbungkus satu transaksi bersama `PMBService.approve()`, dan lindungi dengan constraint `UNIQUE` + retry loop."
 
-- **Prompt Terbaik Sesi 3:**
-  > "Buat fungsi `generate_nim(tahun: int, kode_prodi: str, db: Session) -> str` dengan format `[Tahun:4][Kode Prodi:3]-[Running Number:4]` (contoh: `2025001-0001`). Jelaskan mekanisme pencegahan *race condition* untuk SQLite maupun MySQL/PostgreSQL, serta integrasikan ke fungsi `approve()` agar bersifat *idempotent* (tidak men-generate NIM baru jika status sudah `approved`) dan menolak pendaftar berstatus `rejected`."
-- **Hasil Verifikasi:**  
-  - Mengamati bahwa bila kunci (`lock`) hanya dipasang di dalam `generate_nim()`, dua thread masih bisa mendapat nomor urut sama jika thread A belum melakukan `db.commit()`. Solusinya adalah mengunci seluruh transaksi baca-generate-commit menggunakan `threading.RLock()` di `approve()`, dibantu `with_for_update()` pada baris `program_studi` untuk DB production serta constraint `UNIQUE` + retry loop.
-
-### Sesi 4 — Penyusunan Suite Pengujian `pytest`
-
-- **Prompt Terbaik Sesi 4:**
-  > "Buatkan test suite `pytest` di `tests/conftest.py` dan `tests/test_pmb.py` menggunakan SQLite in-memory (`StaticPool` dengan `PRAGMA foreign_keys=ON`) dan `TestClient` FastAPI via override `get_db`. Uji seluruh kasus wajib: registrasi sukses (201), duplikat email (409), validasi format HP dan email invalid (400), sequential NIM dan idempotency saat approve 2x, approve pada data invalid/rejected, reject, stats, uji paralel `ThreadPoolExecutor` untuk race condition NIM, dan uji constraint database langsung."
-- **Hasil Verifikasi:**  
-  - Seluruh kasus uji berhasil dijalankan dengan `pytest --cov=app --cov-report=term-missing` dengan seluruh test lulus dan coverage di atas ambang minimal 80%.
+- **Evaluasi Kritis:** Jika `generate_nim()` memanggil `db.commit()` sendiri, kegagalan penyimpanan `calon_mahasiswa` tetap menyisakan kenaikan counter (nomor urut hilang/melompat). Menyatukan transaksi di `PMBService.approve()` dengan `db.flush()` memastikan sifat atomik (*all-or-nothing*).
 
 ---
 
-## Ringkasan Prompt Terbaik & Pembelajaran Utama
+## Ringkasan Verifikasi Akhir & OPAR
 
-Prompt yang paling efektif adalah prompt yang **menyertakan konteks kode nyata (nama file, model, dan struktur folder)**, **menyebutkan versi teknologi secara spesifik** (SQLAlchemy 2.0 `Mapped`, Pydantic v2), **menjabarkan kontrak status code secara eksplisit**, serta **meminta penjelasan kompromi arsitektural** (misalnya batasan SQLite vs MySQL). Tanpa pengawasan manusia terhadap detail kecil seperti `create_constraint=True`, `PRAGMA foreign_keys=ON`, dan cakupan lock transaksi, kode hasil AI masih rentan lolos secara sintaks namun gagal menegakkan integritas data di lapangan.
+- **Migrasi Alembic:** `0001_tabel_pmb` → `0002_tabel_nim_counter` (`upgrade head`, `downgrade -1`, `downgrade base`, `upgrade head`, `seed.py` x2) berjalan tanpa error.
+- **Test Suite & Coverage:** **`30 passed in 5.33s`**, total coverage **`96.75%`** (`97%`), memenuhi syarat minimal `--cov-fail-under=80`.
+- **Refleksi Limitasi (OPAR — Reflect):** Uji paralel multi-thread berhasil membuktikan konsistensi penomoran di SQLite tanpa lock Python, namun perilaku *row lock* `SELECT ... FOR UPDATE` pada InnoDB MySQL/PostgreSQL tetap perlu diverifikasi di lingkungan DBMS client-server sebelum produksi. Detail OPAR lengkap terdokumentasi di [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
