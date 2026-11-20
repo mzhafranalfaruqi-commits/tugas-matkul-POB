@@ -13,7 +13,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from app.models.pmb import Base  # noqa: E402
+from app.models import Base  # noqa: E402
 
 config = context.config
 

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import attach_sqlite_fk_pragma, get_db
 from app.main import app
-from app.models.pmb import Base, JalurMasuk, ProgramStudi
+from app.models import Base, JalurMasuk, ProgramStudi
 
 
 @pytest.fixture

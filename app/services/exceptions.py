@@ -1,4 +1,4 @@
-"""Domain exception untuk alur bisnis Modul PMB."""
+"""Domain exception untuk alur bisnis Modul PMB dan Modul KRS."""
 
 
 class EmailSudahTerdaftar(Exception):
@@ -19,3 +19,19 @@ class StatusTidakValid(Exception):
 
 class DataNIMTidakValid(Exception):
     """Dilempar ketika data pendaftar/prodi tidak memenuhi syarat pembuatan NIM (HTTP 400)."""
+
+
+class KRSError(Exception):
+    """Base domain exception untuk seluruh pelanggaran aturan pada Modul KRS."""
+
+
+class KRSTidakDitemukan(KRSError):
+    """Dilempar ketika mahasiswa ber-NIM, KRS, atau mata kuliah tidak ditemukan (HTTP 404)."""
+
+
+class KRSStatusTidakValid(KRSError):
+    """Dilempar ketika KRS berada pada status yang tidak dapat diubah (HTTP 409)."""
+
+
+class KRSValidasiGagal(KRSError):
+    """Dilempar ketika pengisian KRS gagal pada rantai validator (HTTP 400)."""
