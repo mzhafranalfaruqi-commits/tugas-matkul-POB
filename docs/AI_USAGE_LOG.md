@@ -1,6 +1,6 @@
-# AI Usage Log — Implementasi Modul PMB SEVIMA-Mini (Minggu 3–4)
+# AI Usage Log — Implementasi Modul PMB & KRS SEVIMA-Mini (Minggu 3–5)
 
-Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, perbaikan arsitektur NIM generator berbasis database lock pada Minggu 4, hingga penyusunan unit test dan evaluasi kritisnya. Versi terstruktur sesuai format silabus + kerangka **OPAR** (*Observe, Plan, Act, Reflect*) tersedia lengkap pada [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
+Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema database, implementasi REST API, perbaikan arsitektur NIM generator berbasis database lock (Minggu 4), serta implementasi Modul KRS bagian 1 (*Chain of Responsibility*, query prasyarat terindeks, dan `KRSManager` di Minggu 5). Versi terstruktur sesuai format silabus + kerangka **OPAR** (*Observe, Plan, Act, Reflect*) tersedia lengkap pada [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
 
 ## Kepatuhan AI-First Charter
 
@@ -17,6 +17,7 @@ Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema dat
 | 2 | REST API & Validasi Input | Mistral & Codeium | Default FastAPI memunculkan HTTP `422` untuk error Pydantic, sedangkan rubrik uji membutuhkan `400`; respons awal sempat berisiko mengembalikan field sensitif (`alamat`, `tanggal_lahir`). | Menambahkan exception handler `RequestValidationError` → `400`, memisahkan `RegisterRequest` dan `PendaftarOut`, serta memetakan `IntegrityError` ke `409 Conflict`. |
 | 3 | Pembaruan Minggu 4: `PMBService`, `409 Conflict`, & NIM Generator Anti Race Condition | Mistral & Antigravity | Output awal Minggu 3 memakai `threading.RLock()` dan `MAX(nim) + 1`, padahal lock Python gagal di lingkungan multi-worker/multi-server; status conflict `rejected -> approve` sempat disamakan ke `400`. | **Menghapus `threading.Lock()`**, menambah tabel `nim_counter` (`0002_tabel_nim_counter.py`), memakai `with_for_update()` + `BEGIN IMMEDIATE` + `db.flush()` + `UNIQUE` + retry, memecah `format_nim()`, dan memetakan konflik status ke **`409 Conflict`**. |
 | 4 | Strategi Pengujian `pytest` & OpenAPI Docs | Codeium & Antigravity | Tes awal belum menguji fungsi murni `format_nim()` tanpa DB, overflow batas `9999`, atomicity rollback bila commit gagal, race condition idempotency pada ID yang sama, maupun kode `400` untuk kode prodi tidak valid. | Menambahkan tes unit murni `format_nim()`, tes overflow & atomicity rollback, tes paralel 5 pendaftar + 2 thread idempotency pada file DB sementara, tes `400`/`409` pada approve/reject, dan validasi schema `/openapi.json` serta `/redoc`. |
+| 5 | Modul KRS Bag. 1: Skema 2-Tingkat, Chain of Responsibility, Query `NOT EXISTS`, & `KRSManager` | Antigravity & Mistral | Potensi terbalik arah *self-referencing* `prerequisite`, jebakan string `'B' >= 'C'`, cek bentrok naif (`jam_mulai == jam_mulai`), N+1 query / tanpa index pada cek prasyarat, serta celah *race condition* 2 tab 27 SKS saat `add_course`. | Membuat model `SkalaNilai`, `MataKuliah`, `prerequisite`, `KRS`, `KRSDetail` (`0003_tabel_krs.py`); membangun rantai `Duplicate -> SKS -> Prerequisite -> Conflict` dengan interval `<`; memakai query `NOT EXISTS` terverifikasi `EXPLAIN QUERY PLAN`; serta mengunci baris KRS dengan `with_for_update()` / `BEGIN IMMEDIATE`. |
 
 ---
 
@@ -37,10 +38,15 @@ Catatan ini mendokumentasikan penggunaan asisten AI selama perancangan skema dat
 
 - **Evaluasi Kritis:** Jika `generate_nim()` memanggil `db.commit()` sendiri, kegagalan penyimpanan `calon_mahasiswa` tetap menyisakan kenaikan counter (nomor urut hilang/melompat). Menyatukan transaksi di `PMBService.approve()` dengan `db.flush()` memastikan sifat atomik (*all-or-nothing*).
 
+### Prompt Terbaik 4 — Rantai Validasi KRS & Query Prasyarat Anti-Jebakan (Minggu 5)
+> "Dengan model `SkalaNilai`, `MataKuliah`, `prerequisite`, `KRS`, dan `KRSDetail` pada SQLAlchemy 2.0, implementasikan pola Chain of Responsibility (`Validator(ABC)`, `ValidationResult`, `KRSContext`, `build_chain`) untuk urutan `DuplicateValidator -> SKSValidator -> PrerequisiteValidator -> ConflictValidator`. Gunakan rumus irisan interval (`jam_mulai < jam_selesai`), query `NOT EXISTS` dengan bobot `skala_nilai >= 2.0` (`C`) di `semester < aktif`, serta `KRSManager.add_course()` yang mengunci baris KRS dalam satu transaksi."
+
+- **Evaluasi Kritis:** Menolak perbandingan string nilai huruf (`nilai >= 'C'`) yang keliru di SQLite/MySQL dan memastikan kuliah bersambung (misalnya `08:00–10:30` dan `10:30–12:30`) diizinkan dengan operator `<`, serta membuktikan penghapusan *full table scan* lewat [docs/EXPLAIN_PRASYARAT.md](EXPLAIN_PRASYARAT.md).
+
 ---
 
 ## Ringkasan Verifikasi Akhir & OPAR
 
-- **Migrasi Alembic:** `0001_tabel_pmb` → `0002_tabel_nim_counter` (`upgrade head`, `downgrade -1`, `downgrade base`, `upgrade head`, `seed.py` x2) berjalan tanpa error.
-- **Test Suite & Coverage:** **`30 passed in 5.33s`**, total coverage **`96.75%`** (`97%`), memenuhi syarat minimal `--cov-fail-under=80`.
-- **Refleksi Limitasi (OPAR — Reflect):** Uji paralel multi-thread berhasil membuktikan konsistensi penomoran di SQLite tanpa lock Python, namun perilaku *row lock* `SELECT ... FOR UPDATE` pada InnoDB MySQL/PostgreSQL tetap perlu diverifikasi di lingkungan DBMS client-server sebelum produksi. Detail OPAR lengkap terdokumentasi di [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).
+- **Migrasi Alembic:** `0001_tabel_pmb` → `0002_tabel_nim_counter` → `0003_tabel_krs` (`upgrade head`, `downgrade -1`, `upgrade head`, `seed.py` x2) berjalan tanpa error.
+- **Test Suite & Coverage:** **`41 passed in 6.46s`** (30 tes PMB + 11 unit/integration/concurrency tests KRS), total coverage **`95.83%`** (`96%`), memenuhi syarat minimal `--cov-fail-under=80`.
+- **Refleksi Limitasi (OPAR — Reflect):** Uji paralel multi-thread membuktikan konsistensi penomoran NIM dan proteksi batas 24 SKS ("2 tab, 1 detik, 27 SKS") di SQLite tanpa lock Python, namun perilaku *row lock* `SELECT ... FOR UPDATE` pada InnoDB MySQL/PostgreSQL tetap perlu diverifikasi di DBMS client-server sebelum produksi. Detail OPAR lengkap terdokumentasi di [prompts/ai-usage-log.md](../prompts/ai-usage-log.md).

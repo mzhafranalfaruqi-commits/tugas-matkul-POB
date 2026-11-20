@@ -83,3 +83,37 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
      - `400 Bad Request`: Data tidak valid untuk menghasilkan NIM (`DataNIMTidakValid`, misalnya kode prodi bukan 3 digit angka) atau parameter input/query tidak valid.
 - **Konsekuensi & Pertimbangan:**  
   - Klien API dan sistem front-end dapat membedakan kesalahan *state workflow* (`409`) dari kesalahan validasi data (`400`) secara presisi melalui dokumentasi OpenAPI (`/docs` & `/redoc`).
+
+---
+
+## ADR-006: Strategi Rantai Validasi KRS — *Fail-Fast* di `add_course` vs *Collect-All* di `validate_krs`
+
+- **Status:** Diterima (Minggu 5)
+- **Konteks:**  
+  Spesifikasi tugas Minggu 5 meminta pola *Chain of Responsibility* untuk memvalidasi pengisian KRS yang **berhenti pada kegagalan pertama**, sedangkan analisis pengalaman pengguna sejak Minggu 2 menyarankan agar saat validasi menyeluruh mahasiswa melihat **semua kesalahan sekaligus** tanpa harus memperbaiki dan mengirim ulang berkali-kali. Selain itu, urutan validator perlu ditentukan secara rasional.
+- **Keputusan:**  
+  1. **Jalan Tengah (*Fail-Fast* + *Collect-All*):**
+     - `KRSManager.add_course(nim, kode_mk)` menjalankan `self.chain.validate(ctx)` secara **berhenti di error pertama (*fail-fast*)** karena mahasiswa hanya menambahkan satu mata kuliah dan tidak perlu menjalankan query prasyarat yang mahal bila duplikasi atau SKS sudah gagal.
+     - `KRSManager.validate_krs(nim)` mengiterasi `for validator in self.validators: validator.check(ctx)` untuk setiap mata kuliah dalam KRS dan mendeduplikasi pesan guna mengumpulkan **semua pelanggaran sekaligus (*collect-all*)**.
+  2. **Urutan Rantai Baku (`Duplicate → SKS → Prerequisite → Conflict`):**  
+     Menempatkan `DuplicateValidator` di paling depan (paling murah di memori, tanpa query tambahan, dan mencegah mahasiswa mendapat pesan membingungkan "SKS berlebih" ketika sebenarnya hanya mengklik MK yang sama dua kali), disusul `SKSValidator`, `PrerequisiteValidator` (query `NOT EXISTS`), dan `ConflictValidator`.
+- **Konsekuensi & Pertimbangan:**  
+  - Penambahan aturan bisnis baru (misalnya `TunggakanValidator` untuk cek SPP) cukup membuat satu kelas turunan `Validator` baru dan menyisipkannya pada list yang disuntikkan ke `KRSManager`, tanpa mengubah logika `add_course()` maupun `validate_krs()` (*Open/Closed Principle*).
+  - Validasi dan penyisipan di `add_course()` dibungkus dalam satu transaksi terkunci (`with_for_update()` pada MySQL/PostgreSQL dan `BEGIN IMMEDIATE` pada SQLite) untuk mencegah skenario *race condition* "dua tab, satu detik, 27 SKS".
+
+---
+
+## ADR-007: Deteksi Bentrok Interval (`<`), Bobot Numerik `skala_nilai`, dan Asumsi Jadwal Kelas Tunggal
+
+- **Status:** Diterima (Minggu 5)
+- **Konteks:**  
+  Aturan bisnis KRS menyimpan tiga jebakan detail yang sering keliru: (1) definisi jadwal bentrok tidak cukup membandingkan `jam_mulai == jam_mulai`; (2) kuliah yang berakhir tepat saat kuliah berikutnya mulai (mis. `10:30` dan `10:30`) dapat diperbolehkan atau ditolak; (3) perbandingan nilai huruf `'B' >= 'C'` secara leksikografis pada SQL bernilai salah karena urutan ASCII (`'A' < 'B' < 'C' < 'D'`).
+- **Keputusan:**  
+  1. **Rumus Irisan Interval dengan `<` (Bukan `<=`):**  
+     Dua mata kuliah bentrok bila dan hanya bila `a.hari == b.hari and a.jam_mulai < b.jam_selesai and b.jam_mulai < a.jam_selesai`. Dengan operator `<`, kuliah bersambung tepat (`08:00–10:30` diikuti `10:30–12:30`) **diizinkan**. (Bila institusi nanti mewajibkan jeda antar-kelas, cukup menambahkan margin menit di helper murni `bentrok()`).
+  2. **Tabel Referensi `skala_nilai` (Bobot Numerik):**  
+     Menyimpan `huruf -> bobot` (`A=4.0, B=3.0, C=2.0, D=1.0, E=0.0`) lalu membandingkan `s.bobot >= 2.0` bersama `k.semester < :semester` (`"YYYY1"` / `"YYYY2"`) di dalam subquery `NOT EXISTS` pada [app/services/krs_queries.py](../app/services/krs_queries.py).
+  3. **Penyederhanaan Jadwal Kelas:**  
+     Atribut jadwal (`hari`, `jam_mulai`, `jam_selesai`) disimpan sementara di tabel `matakuliah` (asumsi 1 MK = 1 kelas) agar rantai validasi dan query prasyarat fokus diuji pada Minggu 5–6, dan siap diekstrak ke tabel `kelas`/`jadwal` terpisah pada modul penjadwalan berikutnya.
+- **Konsekuensi & Pertimbangan:**  
+  - Lima pasangan kasus bentrok/bersambung dan perbandingan nilai `'A'..'E'` dapat diuji deterministik dan terbukti berjalan memakai indeks tanpa *full table scan* lewat `EXPLAIN QUERY PLAN` di [docs/EXPLAIN_PRASYARAT.md](EXPLAIN_PRASYARAT.md).
