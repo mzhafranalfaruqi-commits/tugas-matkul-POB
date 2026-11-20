@@ -7,17 +7,19 @@ from app.database import get_db
 from app.schemas.pmb import (
     ApproveOut,
     PendaftarOut,
+    RegisterRequest,
     RejectOut,
     StatsOut,
     StatusPendaftaranOut,
 )
-from app.services import pmb_service
 from app.services.exceptions import (
+    DataNIMTidakValid,
     EmailSudahTerdaftar,
     PendaftarTidakDitemukan,
     ReferensiTidakValid,
     StatusTidakValid,
 )
+from app.services.pmb_service import PMBService
 
 router = APIRouter(prefix="/api/pmb", tags=["PMB"])
 
@@ -27,11 +29,18 @@ router = APIRouter(prefix="/api/pmb", tags=["PMB"])
     response_model=PendaftarOut,
     status_code=status.HTTP_201_CREATED,
     summary="Daftar calon mahasiswa baru",
+    responses={
+        201: {"description": "Pendaftaran berhasil disimpan dengan status awal pending"},
+        400: {
+            "description": "Data input tidak valid atau referensi program studi/jalur masuk tidak ditemukan"
+        },
+        409: {"description": "Email calon mahasiswa sudah terdaftar"},
+    },
 )
-def register(data_in: pmb_service.RegisterRequest, db: Session = Depends(get_db)) -> PendaftarOut:
+def register(data_in: RegisterRequest, db: Session = Depends(get_db)) -> PendaftarOut:
     """Mendaftarkan calon mahasiswa baru dan menyimpannya dengan status awal pending."""
     try:
-        calon = pmb_service.register(db, data_in)
+        calon = PMBService.register(db, data_in)
     except EmailSudahTerdaftar as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -50,11 +59,15 @@ def register(data_in: pmb_service.RegisterRequest, db: Session = Depends(get_db)
     "/status/{pendaftar_id}",
     response_model=StatusPendaftaranOut,
     summary="Cek status pendaftaran",
+    responses={
+        200: {"description": "Detail status pendaftaran calon mahasiswa ditemukan"},
+        404: {"description": "Pendaftar tidak ditemukan"},
+    },
 )
 def get_status(pendaftar_id: int, db: Session = Depends(get_db)) -> StatusPendaftaranOut:
     """Mengambil detail pendaftar, status saat ini, dan NIM jika sudah disetujui."""
     try:
-        calon = pmb_service.get_status(db, pendaftar_id)
+        calon = PMBService.get_status(db, pendaftar_id)
     except PendaftarTidakDitemukan as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -79,6 +92,16 @@ def get_status(pendaftar_id: int, db: Session = Depends(get_db)) -> StatusPendaf
     "/approve/{pendaftar_id}",
     response_model=ApproveOut,
     summary="Admin approve pendaftaran dan generate NIM otomatis",
+    responses={
+        200: {
+            "description": "Pendaftar berhasil disetujui dengan NIM baru atau idempotent jika sudah approved"
+        },
+        400: {
+            "description": "Data pendaftar/kode prodi tidak valid untuk pembuatan NIM atau parameter tahun invalid"
+        },
+        404: {"description": "Pendaftar tidak ditemukan"},
+        409: {"description": "Status pendaftar bukan pending (sudah rejected)"},
+    },
 )
 def approve(
     pendaftar_id: int,
@@ -87,13 +110,18 @@ def approve(
 ) -> ApproveOut:
     """Menyetujui pendaftar dan meng-generate NIM secara otomatis (idempotent)."""
     try:
-        calon, already_approved = pmb_service.approve(db, pendaftar_id, tahun=tahun)
+        calon, already_approved = PMBService.approve(db, pendaftar_id, tahun=tahun)
     except PendaftarTidakDitemukan as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except (StatusTidakValid, ReferensiTidakValid) as exc:
+    except StatusTidakValid as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except (DataNIMTidakValid, ReferensiTidakValid, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -113,11 +141,16 @@ def approve(
     "/reject/{pendaftar_id}",
     response_model=RejectOut,
     summary="Admin reject pendaftaran calon mahasiswa",
+    responses={
+        200: {"description": "Pendaftar berhasil ditolak (atau idempotent jika sudah rejected)"},
+        404: {"description": "Pendaftar tidak ditemukan"},
+        409: {"description": "Konflik status: pendaftar yang sudah approved tidak dapat di-reject"},
+    },
 )
 def reject(pendaftar_id: int, db: Session = Depends(get_db)) -> RejectOut:
     """Menolak pendaftaran calon mahasiswa selama statusnya belum approved."""
     try:
-        calon = pmb_service.reject(db, pendaftar_id)
+        calon = PMBService.reject(db, pendaftar_id)
     except PendaftarTidakDitemukan as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -125,7 +158,7 @@ def reject(pendaftar_id: int, db: Session = Depends(get_db)) -> RejectOut:
         ) from exc
     except StatusTidakValid as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
@@ -136,7 +169,10 @@ def reject(pendaftar_id: int, db: Session = Depends(get_db)) -> RejectOut:
     "/stats",
     response_model=StatsOut,
     summary="Dashboard statistik jumlah pendaftar PMB",
+    responses={
+        200: {"description": "Statistik jumlah pendaftar per status, program studi, dan jalur masuk"},
+    },
 )
 def get_stats(db: Session = Depends(get_db)) -> StatsOut:
     """Menyajikan statistik pendaftar berdasarkan status, program studi, dan jalur masuk."""
-    return pmb_service.get_stats(db)
+    return PMBService.get_stats(db)

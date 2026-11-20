@@ -84,3 +84,13 @@ class CalonMahasiswa(Base):
     jalur_masuk: Mapped["JalurMasuk"] = relationship(
         back_populates="calon_mahasiswa"
     )
+
+
+class NimCounter(Base):
+    """Tabel counter atomik untuk menjaga urutan NIM per tahun dan kode prodi."""
+
+    __tablename__ = "nim_counter"
+
+    tahun: Mapped[int] = mapped_column(primary_key=True)
+    kode_prodi: Mapped[str] = mapped_column(String(3), primary_key=True)
+    last_number: Mapped[int] = mapped_column(default=0)

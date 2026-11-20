@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 import pytest
@@ -12,9 +13,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import attach_sqlite_fk_pragma, get_db
 from app.main import app
-from app.models.pmb import Base, CalonMahasiswa, JalurMasuk, ProgramStudi
-from app.services import pmb_service
-from app.services.nim_generator import generate_nim
+from app.models.pmb import (
+    Base,
+    CalonMahasiswa,
+    JalurMasuk,
+    NimCounter,
+    ProgramStudi,
+    StatusPMB,
+)
+from app.services.nim_generator import format_nim, generate_nim
+from app.services.pmb_service import PMBService
 from seed import seed_data
 
 
@@ -183,6 +191,28 @@ def test_get_status_success_and_not_found(
     assert res_missing.status_code == 404
 
 
+def test_format_nim_pure_unit() -> None:
+    """Pure unit test format_nim tanpa DB: zero-padding, batas maksimum, dan validasi input."""
+    assert format_nim(2025, "001", 1) == "2025001-0001"
+    assert format_nim(2025, "001", 7) == "2025001-0007"
+    assert format_nim(2025, "003", 9999) == "2025003-9999"
+
+    with pytest.raises(ValueError, match="Nomor urut habis"):
+        format_nim(2025, "001", 10000)
+    with pytest.raises(ValueError):
+        format_nim(2025, "001", 0)
+    with pytest.raises(ValueError):
+        format_nim(2025, "001", True)
+    with pytest.raises(ValueError):
+        format_nim(1999, "001", 1)
+    with pytest.raises(ValueError):
+        format_nim(True, "001", 1)
+    with pytest.raises(ValueError):
+        format_nim(2025, "01", 1)
+    with pytest.raises(ValueError):
+        format_nim(2025, "ABC", 1)
+
+
 def test_approve_generate_nim(
     client: TestClient, sample_payload: dict[str, object]
 ) -> None:
@@ -202,13 +232,18 @@ def test_approve_generate_nim(
 
     app_1 = client.put(f"/api/pmb/approve/{id_1}?tahun=2025")
     assert app_1.status_code == 200
-    assert app_1.json()["nim"] == "2025001-0001"
+    nim_1 = app_1.json()["nim"]
+    assert re.fullmatch(r"^\d{4}001-\d{4}$", nim_1) is not None
+    assert nim_1 == "2025001-0001"
     assert app_1.json()["status"] == "approved"
     assert app_1.json()["already_approved"] is False
 
     app_2 = client.put(f"/api/pmb/approve/{id_2}?tahun=2025")
     assert app_2.status_code == 200
-    assert app_2.json()["nim"] == "2025001-0002"
+    nim_2 = app_2.json()["nim"]
+    assert re.fullmatch(r"^\d{4}001-\d{4}$", nim_2) is not None
+    assert int(nim_2.split("-")[-1]) == int(nim_1.split("-")[-1]) + 1
+    assert nim_2 == "2025001-0002"
 
     app_si = client.put(f"/api/pmb/approve/{id_si}?tahun=2025")
     assert app_si.status_code == 200
@@ -221,9 +256,9 @@ def test_approve_generate_nim(
 
 
 def test_approve_idempotent(
-    client: TestClient, sample_payload: dict[str, object]
+    client: TestClient, db_session: Session, sample_payload: dict[str, object]
 ) -> None:
-    """Approve 2x pada pendaftar yang sama tidak boleh membuat NIM baru dan tetap idempotent."""
+    """Approve 2x pada pendaftar yang sama harus idempotent dan tidak melompatkan counter."""
     p1 = dict(sample_payload)
     p1["email"] = "idem1@example.com"
     id_1 = client.post("/api/pmb/register", json=p1).json()["id"]
@@ -249,11 +284,15 @@ def test_approve_idempotent(
     assert next_cand.status_code == 200
     assert next_cand.json()["nim"] == "2025001-0002"
 
+    counter = db_session.get(NimCounter, (2025, "001"))
+    assert counter is not None
+    assert counter.last_number == 2
+
 
 def test_approve_invalid_data(
     client: TestClient, sample_payload: dict[str, object]
 ) -> None:
-    """Approve pada ID tidak ditemukan harus 404, dan pendaftar rejected harus 400."""
+    """Approve pada ID tidak ditemukan harus 404, dan pendaftar rejected harus 409 Conflict."""
     res_missing = client.put("/api/pmb/approve/99999?tahun=2025")
     assert res_missing.status_code == 404
 
@@ -263,13 +302,38 @@ def test_approve_invalid_data(
     assert rej.status_code == 200
 
     res_rejected = client.put(f"/api/pmb/approve/{pendaftar_id}?tahun=2025")
-    assert res_rejected.status_code == 400
+    assert res_rejected.status_code == 409
+    assert "bukan pending" in res_rejected.json()["detail"].lower()
+
+
+def test_approve_invalid_kode_prodi_400(
+    client: TestClient, db_session: Session, sample_payload: dict[str, object]
+) -> None:
+    """Jika data prodi pendaftar tidak memiliki kode 3 digit angka, approve mengembalikan 400."""
+    bad_prodi = ProgramStudi(kode="01", nama="Prodi Kode Pendek", fakultas="Fakultas Teknik")
+    db_session.add(bad_prodi)
+    db_session.commit()
+    db_session.refresh(bad_prodi)
+
+    payload = dict(sample_payload)
+    payload["email"] = "badprodi@example.com"
+    payload["program_studi_id"] = bad_prodi.id
+    reg = client.post("/api/pmb/register", json=payload)
+    assert reg.status_code == 201
+    pendaftar_id = reg.json()["id"]
+
+    res = client.put(f"/api/pmb/approve/{pendaftar_id}?tahun=2025")
+    assert res.status_code == 400
+    assert "3 digit" in res.json()["detail"].lower()
+
+    res_bad_tahun = client.put(f"/api/pmb/approve/{pendaftar_id}?tahun=1999")
+    assert res_bad_tahun.status_code == 400
 
 
 def test_reject_pendaftar(
     client: TestClient, sample_payload: dict[str, object]
 ) -> None:
-    """Endpoint reject harus mengubah status, idempotent, dan menolak ID tidak ada / approved."""
+    """Endpoint reject harus mengubah status, idempotent, 404 jika hilang, dan 409 jika approved."""
     assert client.put("/api/pmb/reject/99999").status_code == 404
 
     p1 = dict(sample_payload)
@@ -289,7 +353,8 @@ def test_reject_pendaftar(
     id_2 = client.post("/api/pmb/register", json=p2).json()["id"]
     assert client.put(f"/api/pmb/approve/{id_2}?tahun=2025").status_code == 200
 
-    assert client.put(f"/api/pmb/reject/{id_2}").status_code == 400
+    res_conflict = client.put(f"/api/pmb/reject/{id_2}")
+    assert res_conflict.status_code == 409
 
 
 def test_stats_endpoint(client: TestClient, sample_payload: dict[str, object]) -> None:
@@ -333,9 +398,11 @@ def test_stats_endpoint(client: TestClient, sample_payload: dict[str, object]) -
 
 
 def test_nim_generator_unit_dan_validasi(db_session: Session) -> None:
-    """Uji langsung fungsi generate_nim dan validasi inputnya."""
+    """Uji langsung fungsi generate_nim berbasis nim_counter dan validasi inputnya."""
     assert generate_nim(2025, "001", db_session) == "2025001-0001"
+    assert generate_nim(2025, "001", db_session) == "2025001-0002"
     assert generate_nim(2025, "003", db_session) == "2025003-0001"
+    db_session.commit()
 
     with pytest.raises(ValueError):
         generate_nim(1999, "001", db_session)
@@ -347,8 +414,44 @@ def test_nim_generator_unit_dan_validasi(db_session: Session) -> None:
         generate_nim(2025, 1, db_session)  # type: ignore[arg-type]
 
 
+def test_generate_nim_overflow_dan_atomicity(
+    client: TestClient,
+    db_session: Session,
+    sample_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uji batas kapasitas nomor urut 9999 dan rollback atomik bila commit approve gagal."""
+    db_session.add(NimCounter(tahun=2026, kode_prodi="001", last_number=9999))
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="Nomor urut habis"):
+        generate_nim(2026, "001", db_session)
+    db_session.rollback()
+
+    payload = dict(sample_payload)
+    payload["email"] = "atomic@example.com"
+    pendaftar_id = client.post("/api/pmb/register", json=payload).json()["id"]
+
+    original_commit = db_session.commit
+
+    def failing_commit() -> None:
+        raise IntegrityError("UPDATE", {}, Exception("simulated commit failure"))
+
+    monkeypatch.setattr(db_session, "commit", failing_commit)
+    with pytest.raises(IntegrityError):
+        PMBService.approve(db_session, pendaftar_id, tahun=2027)
+    monkeypatch.setattr(db_session, "commit", original_commit)
+
+    calon = db_session.get(CalonMahasiswa, pendaftar_id)
+    assert calon is not None
+    assert calon.status == StatusPMB.pending
+    assert calon.nim is None
+    assert calon.approved_at is None
+    assert db_session.get(NimCounter, (2027, "001")) is None
+
+
 def test_nim_generator_thread_safe(tmp_path: Path) -> None:
-    """Eksekusi approve secara paralel dari beberapa thread harus menghasilkan NIM unik & urut."""
+    """Eksekusi approve paralel (DB lock + BEGIN IMMEDIATE + retry) tanpa threading.Lock Python."""
     db_file = tmp_path / "concurrent_pmb.db"
     file_engine = create_engine(
         f"sqlite:///{db_file}",
@@ -375,11 +478,24 @@ def test_nim_generator_thread_safe(tmp_path: Path) -> None:
                 db.add(calon)
                 db.flush()
                 candidate_ids.append(calon.id)
+
+            same_calon = CalonMahasiswa(
+                nama_lengkap="Calon Race Idempotent",
+                email="race.idem@example.com",
+                phone="081234567890",
+                tanggal_lahir=date(2006, 2, 15),
+                alamat="Jl. Kampus Merdeka No. 2",
+                program_studi_id=2,
+                jalur_masuk_id=1,
+            )
+            db.add(same_calon)
+            db.flush()
+            same_id = same_calon.id
             db.commit()
 
         def worker(cid: int) -> str:
             with LocalSession() as session:
-                approved, _ = pmb_service.approve(session, cid, tahun=2025)
+                approved, _ = PMBService.approve(session, cid, tahun=2025)
                 assert approved.nim is not None
                 return approved.nim
 
@@ -393,6 +509,24 @@ def test_nim_generator_thread_safe(tmp_path: Path) -> None:
             "2025001-0004",
             "2025001-0005",
         ]
+
+        def worker_same(_: int) -> tuple[str, bool]:
+            with LocalSession() as session:
+                approved, already = PMBService.approve(session, same_id, tahun=2025)
+                assert approved.nim is not None
+                return approved.nim, already
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            same_results = list(executor.map(worker_same, [1, 2]))
+
+        assert [r[0] for r in same_results] == ["2025002-0001", "2025002-0001"]
+        assert sorted(r[1] for r in same_results) == [False, True]
+
+        with LocalSession() as verify_db:
+            counter_001 = verify_db.get(NimCounter, (2025, "001"))
+            counter_002 = verify_db.get(NimCounter, (2025, "002"))
+            assert counter_001 is not None and counter_001.last_number == 5
+            assert counter_002 is not None and counter_002.last_number == 1
     finally:
         file_engine.dispose()
 
@@ -462,7 +596,7 @@ def test_database_constraints_directly(db_session: Session) -> None:
 
 
 def test_swagger_docs_root_and_get_db(client: TestClient) -> None:
-    """Endpoint root, Swagger /docs, /openapi.json, serta dependency get_db harus berfungsi."""
+    """Endpoint root, Swagger /docs, ReDoc /redoc, /openapi.json, serta get_db harus berfungsi."""
     res_root = client.get("/")
     assert res_root.status_code == 200
     assert res_root.json()["docs"] == "/docs"
@@ -470,13 +604,28 @@ def test_swagger_docs_root_and_get_db(client: TestClient) -> None:
     res_docs = client.get("/docs")
     assert res_docs.status_code == 200
 
+    res_redoc = client.get("/redoc")
+    assert res_redoc.status_code == 200
+
     res_openapi = client.get("/openapi.json")
     assert res_openapi.status_code == 200
     paths = res_openapi.json()["paths"]
     assert "/api/pmb/register" in paths
     assert "/api/pmb/status/{pendaftar_id}" in paths
     assert "/api/pmb/approve/{pendaftar_id}" in paths
+    assert "/api/pmb/reject/{pendaftar_id}" in paths
     assert "/api/pmb/stats" in paths
+
+    approve_responses = paths["/api/pmb/approve/{pendaftar_id}"]["put"]["responses"]
+    assert "200" in approve_responses
+    assert "400" in approve_responses
+    assert "404" in approve_responses
+    assert "409" in approve_responses
+
+    reject_responses = paths["/api/pmb/reject/{pendaftar_id}"]["put"]["responses"]
+    assert "200" in reject_responses
+    assert "404" in reject_responses
+    assert "409" in reject_responses
 
     gen = get_db()
     session = next(gen)

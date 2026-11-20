@@ -11,13 +11,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sevima.db")
 
 
 def attach_sqlite_fk_pragma(target_engine: Engine) -> None:
-    """Aktifkan PRAGMA foreign_keys=ON setiap kali koneksi SQLite dibuka."""
+    """Aktifkan PRAGMA foreign_keys=ON dan busy_timeout pada koneksi SQLite."""
 
     @event.listens_for(target_engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, _connection_record) -> None:
         if isinstance(dbapi_connection, sqlite3.Connection):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
 
 
