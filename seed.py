@@ -422,6 +422,48 @@ def seed_jadwal_data(db: Session) -> None:
                 )
             )
 
+    # Tautkan KRS semester aktif 20251 untuk dummy mahasiswa 2025001-0001 (jika ada)
+    # agar demo ekspor .ics dan invalidasi otomatis KRS saat rescheduling langsung jalan.
+    dummy_mhs = db.execute(
+        select(CalonMahasiswa).where(CalonMahasiswa.nim == "2025001-0001")
+    ).scalar_one_or_none()
+    if dummy_mhs is not None:
+        target_kelas = [
+            ("IF201", "B"),
+            ("IF102", "A"),
+            ("IF204", "A"),
+        ]
+        krs_aktif = db.execute(
+            select(KRS).where(KRS.nim == dummy_mhs.nim, KRS.semester == "20251")
+        ).scalar_one_or_none()
+        if krs_aktif is None:
+            krs_aktif = KRS(
+                nim=dummy_mhs.nim,
+                semester="20251",
+                status=KRSStatus.APPROVED,
+                dosen_pa_id=101,
+                approved_at=datetime.now(timezone.utc),
+                details=[
+                    KRSDetail(
+                        kode_mk=kode_mk,
+                        kelas_id=kelas_by_key[(kode_mk, nama_kelas)].id,
+                    )
+                    for kode_mk, nama_kelas in target_kelas
+                ],
+            )
+            db.add(krs_aktif)
+        else:
+            existing_by_mk = {d.kode_mk: d for d in krs_aktif.details}
+            for kode_mk, nama_kelas in target_kelas:
+                target_kid = kelas_by_key[(kode_mk, nama_kelas)].id
+                if kode_mk in existing_by_mk:
+                    if existing_by_mk[kode_mk].kelas_id is None:
+                        existing_by_mk[kode_mk].kelas_id = target_kid
+                else:
+                    krs_aktif.details.append(
+                        KRSDetail(kode_mk=kode_mk, kelas_id=target_kid)
+                    )
+
     db.commit()
 
 

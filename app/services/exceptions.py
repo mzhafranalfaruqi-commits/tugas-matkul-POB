@@ -95,6 +95,12 @@ class CapacityError(ScheduleError):
     status_code = 409
 
 
+class ScheduleValidationError(ScheduleError):
+    """Dilempar ketika slot jadwal tidak memenuhi batas waktu yang valid (HTTP 422)."""
+
+    status_code = 422
+
+
 class ScheduleConflictError(ScheduleError):
     """Dilempar ketika jadwal yang disimpan bentrok ruangan atau dosen (HTTP 409)."""
 

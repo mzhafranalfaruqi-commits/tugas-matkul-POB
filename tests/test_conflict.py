@@ -273,27 +273,38 @@ def test_cek_kapasitas_kuota_dan_terdaftar(db_session: Session) -> None:
 def test_jadwal_api_crud_conflicts_dan_status_codes(
     client: TestClient, db_session: Session
 ) -> None:
-    """Uji endpoint POST/PUT/DELETE/GET conflicts termasuk 201, 200, 204, 404, 409, dan 422."""
+    """Uji endpoint POST/PUT/DELETE/GET conflicts termasuk 201, 200, 204, 403, 404, 409, dan 422."""
     k1, k2, r_40, r_30, d1, d2 = _siapkan_data_dasar(db_session)
+    admin_headers = {"X-Role": "admin"}
+
+    # Tanpa header admin atau dengan role mahasiswa -> 403 Forbidden
+    payload_valid = {
+        "kelas_id": k1.id,
+        "hari": 1,
+        "jam_mulai": "08:00:00",
+        "jam_selesai": "09:40:00",
+        "ruangan_kode": r_40.kode,
+        "dosen_id": d1.id,
+    }
+    assert client.post("/api/jadwal", json=payload_valid).status_code == 403
+    assert (
+        client.post(
+            "/api/jadwal",
+            headers={"X-Role": "mahasiswa"},
+            json=payload_valid,
+        ).status_code
+        == 403
+    )
 
     # POST valid -> 201
-    res1 = client.post(
-        "/api/jadwal",
-        json={
-            "kelas_id": k1.id,
-            "hari": 1,
-            "jam_mulai": "08:00:00",
-            "jam_selesai": "09:40:00",
-            "ruangan_kode": r_40.kode,
-            "dosen_id": d1.id,
-        },
-    )
+    res1 = client.post("/api/jadwal", headers=admin_headers, json=payload_valid)
     assert res1.status_code == 201
     id1 = res1.json()["id"]
 
     # POST bersambung tepat di ruang & dosen sama -> 201
     res_sambung = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k1.id,
             "hari": 1,
@@ -309,6 +320,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # POST bentrok ruangan saja (08:30-09:30 hanya menabrak id1) -> 409 dengan payload conflicts
     res_room_409 = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k2.id,
             "hari": 1,
@@ -324,6 +336,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # POST bentrok dengan dua slot bersambung sekaligus (08:30-10:00 menabrak id1 & id_sambung)
     res_two_409 = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k2.id,
             "hari": 1,
@@ -342,6 +355,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # POST bentrok dosen saja -> 409
     res_lec_409 = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k2.id,
             "hari": 1,
@@ -357,6 +371,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # POST bentrok ganda (ruang + dosen sekaligus) -> 409 memuat kedua konflik
     res_dual_409 = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k2.id,
             "hari": 1,
@@ -375,6 +390,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # POST kapasitas kurang (k2 kuota 35 di A104 kapasitas 30) -> 409
     res_cap_409 = client.post(
         "/api/jadwal",
+        headers=admin_headers,
         json={
             "kelas_id": k2.id,
             "hari": 2,
@@ -391,6 +407,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert (
         client.post(
             "/api/jadwal",
+            headers=admin_headers,
             json={
                 "kelas_id": k1.id,
                 "hari": 2,
@@ -405,6 +422,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert (
         client.post(
             "/api/jadwal",
+            headers=admin_headers,
             json={
                 "kelas_id": 9999,
                 "hari": 2,
@@ -419,6 +437,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert (
         client.post(
             "/api/jadwal",
+            headers=admin_headers,
             json={
                 "kelas_id": k1.id,
                 "hari": 2,
@@ -466,7 +485,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
             "dosen_id": d1.id,
         },
     ):
-        assert client.post("/api/jadwal", json=bad_payload).status_code == 422
+        assert client.post("/api/jadwal", headers=admin_headers, json=bad_payload).status_code == 422
 
     # Rute PMB/KRS tetap mengembalikan 400 untuk error validasi Pydantic (kompatibilitas ADR-003)
     assert client.post("/api/pmb/register", json={}).status_code == 400
@@ -474,6 +493,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     # PUT menggeser jadwal kedua 15 menit (09:40-11:20 -> 09:55-11:35) tanpa bentrok diri sendiri -> 200
     res_put_ok = client.put(
         f"/api/jadwal/{id_sambung}",
+        headers=admin_headers,
         json={
             "kelas_id": k1.id,
             "hari": 1,
@@ -485,11 +505,13 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     )
     assert res_put_ok.status_code == 200
     assert res_put_ok.json()["jam_mulai"] == "09:55:00"
+    assert res_put_ok.json()["sequence"] == 1
 
     # PUT menggeser menabrak jadwal pertama -> 409, id hilang -> 404, jam terbalik -> 422
     assert (
         client.put(
             f"/api/jadwal/{id_sambung}",
+            headers=admin_headers,
             json={
                 "kelas_id": k1.id,
                 "hari": 1,
@@ -504,6 +526,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert (
         client.put(
             "/api/jadwal/9999",
+            headers=admin_headers,
             json={
                 "kelas_id": k1.id,
                 "hari": 1,
@@ -518,6 +541,7 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert (
         client.put(
             f"/api/jadwal/{id_sambung}",
+            headers=admin_headers,
             json={
                 "kelas_id": k1.id,
                 "hari": 1,
@@ -536,10 +560,10 @@ def test_jadwal_api_crud_conflicts_dan_status_codes(
     assert res_conflicts.json() == []
 
     # DELETE -> 204, lalu DELETE lagi -> 404
-    res_del = client.delete(f"/api/jadwal/{id_sambung}")
+    res_del = client.delete(f"/api/jadwal/{id_sambung}", headers=admin_headers)
     assert res_del.status_code == 204
     assert res_del.content == b""
-    assert client.delete(f"/api/jadwal/{id_sambung}").status_code == 404
+    assert client.delete(f"/api/jadwal/{id_sambung}", headers=admin_headers).status_code == 404
 
     # Verifikasi OpenAPI mempublikasikan semua endpoint /api/jadwal/*
     openapi = client.get("/openapi.json").json()

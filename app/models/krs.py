@@ -36,6 +36,7 @@ class Actor(str, enum.Enum):
 
     MAHASISWA = "MAHASISWA"
     DOSEN_PA = "DOSEN_PA"
+    SISTEM = "SISTEM"
 
 
 # Tabel transisi eksplisit state machine KRS: (status_awal, aktor) -> {status_tujuan}
@@ -43,6 +44,8 @@ TRANSITIONS: dict[tuple[KRSStatus, Actor], set[KRSStatus]] = {
     (KRSStatus.DRAFT, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
     (KRSStatus.SUBMITTED, Actor.DOSEN_PA): {KRSStatus.APPROVED, KRSStatus.REVISION},
     (KRSStatus.REVISION, Actor.MAHASISWA): {KRSStatus.SUBMITTED},
+    (KRSStatus.SUBMITTED, Actor.SISTEM): {KRSStatus.REVISION},
+    (KRSStatus.APPROVED, Actor.SISTEM): {KRSStatus.REVISION},
 }
 
 

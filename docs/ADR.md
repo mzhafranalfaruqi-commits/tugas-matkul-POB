@@ -208,3 +208,52 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
 - **Konsekuensi & Pertimbangan:**  
   - Penguncian baris berurutan konsisten mencegah *deadlock* siklus antar dua transaksi konkuren pada DBMS *client-server* (MySQL InnoDB/PostgreSQL), dan skenario balapan dua admin di ruang dan jam sama teruji pada file SQLite temporer (`test_scheduling_concurrency_dua_admin_satu_ruangan`: tepat 1 sukses dan 1 `ScheduleConflictError`).
   - Sama seperti ADR-004 dan ADR-008, karena SQLite mengabaikan klausa `FOR UPDATE` dan mengandalkan kunci tulis level berkas (`BEGIN IMMEDIATE`), pembuktian *row-level lock* spesifik ruangan/dosen pada konkurensi tinggi tetap memerlukan verifikasi di MySQL InnoDB atau PostgreSQL pada tahap deploy.
+
+---
+
+## ADR-013: Observer Pattern + Transactional Outbox vs Pub-Sub & Retensi Tabel `notifikasi`
+
+- **Status:** Diterima (Minggu 8)
+- **Konteks:**  
+  Perubahan atau penghapusan jadwal kuliah oleh admin wajib memberi tahu mahasiswa peserta kelas, dosen pengampu (baik dosen baru maupun dosen sebelumnya bila terjadi pergantian pengampu), serta admin akademik melalui beberapa kanal (`EMAIL`, `SMS`, `PUSH`). Namun, memanggil pengirim notifikasi langsung di dalam transaksi SQL memiliki dua risiko fatal: (1) bila transaksi *rollback* akibat bentrok atau error DB, notifikasi palsu sudah terlanjur terkirim; (2) bila *gateway* notifikasi gagal atau melambat, transaksi database tertahan atau ikut gagal. Di sisi lain, Minggu 6 sudah memiliki tabel `notifikasi` di database sebagai *in-app inbox* riwayat revisi KRS mahasiswa.
+- **Keputusan:**  
+  1. **Observer Pattern In-Process + Transactional Outbox (`app/services/observer.py`, migrasi `0006`):**  
+     Memilih **Observer Pattern** (`ScheduleSubject` + `StudentObserver`, `LecturerObserver`, `AdminObserver`) alih-alih langsung memasang *message broker* eksternal (Redis/RabbitMQ/Kafka), namun tetap memisahkan fase penyimpanan event dan pengirimannya memakai tabel **`outbox`** (`PENDING` -> `SENT` / `FAILED` maksimal 5 percobaan) dan `OutboxDispatcher`. Baris `Outbox` ditulis **di dalam transaksi yang sama** dengan `UPDATE/DELETE jadwal` + `KRSInvalidator`, lalu `OutboxDispatcher.run()` baru dijalankan **setelah `db.commit()` berhasil**.
+  2. **Singleton Wiring & Idempotency Key:**  
+     Observer dipasang **sekali saat inisialisasi modul** (bukan di handler HTTP agar tidak terjadi kebocoran memori maupun pengiriman berlipat), `ScheduleSubject.notify()` membungkus setiap observer dalam `try/except` terisolasi, dan setiap pengiriman memakai kunci deterministik `{event_id}:{penerima}:{channel}` pada `LogChannel` + `MemoryIdemStore`.
+  3. **Mempertahankan Tabel `notifikasi` Minggu 6:**  
+     Tabel `notifikasi` tetap dipertahankan sebagai *in-app notification inbox* bagi mahasiswa (khususnya saat KRS mereka terinvalidasi ke `REVISION`), sedangkan tabel `outbox` bertugas sebagai antrean pengiriman event lintas kanal (`Email`/`SMS`/`Push`).
+- **Konsekuensi & Pertimbangan:**  
+  - Nol dependensi broker eksternal di tahap kuliah, namun bila kelak arsitektur berubah menjadi *microservice*, hanya `OutboxDispatcher` yang perlu diubah untuk menerbitkan pesan ke RabbitMQ/Kafka.
+  - Limitasi lingkungan lokal: `OutboxDispatcher` dipanggil sinkron tepat sesudah `commit()` dan `MemoryIdemStore` hidup di memori proses; pada produksi berskala besar, *dispatcher* dipindah ke *background worker* terpisah dan `IdemStore` dipindah ke Redis atau tabel idempotency DB.
+
+---
+
+## ADR-014: Perluasan State Machine KRS dengan `Actor.SISTEM` & Guardrail 4 Lapis AI Rescheduling
+
+- **Status:** Diterima (Minggu 8)
+- **Konteks:**  
+  Ketika jadwal kuliah berubah atau dihapus, KRS mahasiswa yang sudah `SUBMITTED` atau `APPROVED` pada kelas tersebut berpotensi kini bertabrakan dengan jadwal mata kuliah lain, sehingga wajib dikembalikan ke status `REVISION` agar mahasiswa dan Dosen PA meninjau ulang. Selain itu, fitur AI Rescheduling membutuhkan saran slot alternatif dari LLM tanpa membuka peluang halusinasi ruang fiktif, ruangan terlalu sempit, atau slot yang tetap bentrok.
+- **Keputusan:**  
+  1. **Menambahkan `Actor.SISTEM` pada State Machine KRS (`app/models/krs.py`):**  
+     Menambah aktor `SISTEM` beserta dua transisi sah baru: `(SUBMITTED, SISTEM) -> REVISION` dan `(APPROVED, SISTEM) -> REVISION`. Ruang kombinatorial *exhaustive property test* di [tests/test_krs_property.py](../tests/test_krs_property.py) diperbarui dari `4 × 2 × 4 = 32` (4 sah, 28 ilegal) menjadi **`4 × 3 × 4 = 48`** (**6 sah, 42 ilegal**). KRS `DRAFT` dan `REVISION` sengaja tidak disentuh oleh `KRSInvalidator`.
+  2. **Guardrail AI Rescheduling 4 Lapis (`"AI Suggests, Deterministic Validator Decides"`):**  
+     Sebelum memanggil LLM (`LLMClient`), kode terlebih dahulu menghitung daftar slot yang benar-benar bebas bentrok dan cukup kursi (`hitung_slot_tersedia`) sebagai konteks prompt. Keluaran JSON dari LLM (`EnvLLMClient` atau fallback deterministik `HeuristicLLMClient` saat offline/tanpa API key) kemudian **wajib** disaring oleh `saring_saran()` melalui 4 lapis: (1) ekstraksi & parsing JSON aman (`[]` bila rusak), (2) validasi skema Pydantic `Saran`, (3) pengecekan eksistensi ruangan & `kapasitas >= peserta`, dan (4) uji `detect_schedule_conflict()` dengan ID kandidat `-1` serta cek batas tengah malam. Penerapan saran lewat `POST /api/jadwal/{id}/apply` **wajib masuk satu pintu** melalui `SchedulingService.update()`.
+- **Konsekuensi & Pertimbangan:**  
+  - Invalidasi KRS, pembuatan `KRSLog(aksi="INVALIDATE")`, `Notifikasi`, pembaruan `Jadwal`, dan penulisan `Outbox` berjalan dalam satu *Unit of Work* (`commit()` tunggal).
+  - Meskipun LLM menghasilkan JSON rusak atau ruangan fiktif, aplikasi tidak pernah *crash* dan tidak pernah meneruskan saran tidak valid ke database.
+
+---
+
+## ADR-015: Ekspor iCalendar RFC 5545 Tanpa Library Eksternal & Proteksi Role Admin
+
+- **Status:** Diterima (Minggu 8)
+- **Konteks:**  
+  Mahasiswa memerlukan endpoint ekspor jadwal ke aplikasi kalender (`GET /api/mahasiswa/{nim}/jadwal.ics`), serta pengubahan jadwal maupun fitur AI Conflict Resolver (`POST/PUT/DELETE /api/jadwal`, `/suggestions`, `/apply`) harus dibatasi hanya untuk aktor admin agar tidak dapat dipicu sembarang mahasiswa.
+- **Keputusan:**  
+  1. **Generator iCalendar RFC 5545 Murni (`app/services/icalendar.py`):**  
+     Membuat formatter `ke_vevent()` dan `export_jadwal_ics()` tanpa menambah pustaka eksternal `icalendar`, menggunakan baris wajib `CRLF` (`\r\n`), blok `VTIMEZONE` `Asia/Jakarta`, `DTSTART`/`DTEND;TZID=Asia/Jakarta`, aturan pengulangan mingguan `RRULE:FREQ=WEEKLY;UNTIL=...Z` (UTC sesuai syarat RFC 5545), `UID` stabil (`jadwal-{id}@sevima-mini`), serta kolom `jadwal.sequence` (migrasi `0006`) yang selalu bertambah setiap pembaruan agar impor ulang kalender memperbarui jadwal lama dan bukan membuat duplikat.
+  2. **Dependensi `require_admin` (`X-Role: admin`) untuk Demo Lokal:**  
+     Melindungi endpoint mutasi dan resolver jadwal dengan `require_admin` yang memverifikasi header `X-Role: admin` (mengembalikan HTTP `403 Forbidden` bila tidak sesuai), disertai selektor peran pada UI [resolver.html](../app/templates/resolver.html) agar mahasiswa dan dosen dapat mendemonstrasikan kontrol akses secara langsung.
+- **Konsekuensi & Pertimbangan:**  
+  - Penambahan `require_admin` bersifat eksplisit sebagai kontrol akses demo sebelum modul autentikasi penuh (JWT/OAuth2 + RBAC tervalidasi tanda tangan kriptografis) diimplementasikan; header `X-Role` **tidak boleh** dianggap aman di lingkungan produksi tanpa token terverifikasi.

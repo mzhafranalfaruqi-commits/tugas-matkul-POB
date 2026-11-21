@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conflict Resolver — SEVIMA-Mini</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --border: #dde3ee;
+      --text: #1c2434;
+      --muted: #607087;
+      --primary: #1f5eff;
+      --primary-hover: #1549d6;
+      --danger: #d63638;
+      --danger-bg: #fef1f1;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: #102a43;
+      color: #ffffff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 0.15rem 0 0; font-size: 0.85rem; color: #cbd5e1; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .toolbar label { font-size: 0.85rem; color: #e2e8f0; }
+    .toolbar select, .btn {
+      padding: 0.45rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success {
+      background: var(--ok);
+      color: #ffffff;
+      border-color: var(--ok);
+    }
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text);
+    }
+    .link-ics {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.14);
+      padding: 0.45rem 0.8rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 0.85rem;
+    }
+    main {
+      max-width: 1120px;
+      margin: 1.5rem auto;
+      padding: 0 1rem 2rem;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.9rem;
+      margin-bottom: 1.25rem;
+    }
+    .stat-card, .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+    }
+    .stat-card .num { font-size: 1.65rem; font-weight: 700; }
+    .stat-card .lbl { font-size: 0.8rem; color: var(--muted); }
+    .banner {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; display: block; }
+    .banner.err { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; display: block; }
+    .conflict-card {
+      margin-bottom: 1rem;
+      border-left: 4px solid var(--danger);
+    }
+    .conflict-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.65rem;
+      gap: 0.5rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-room { background: var(--danger-bg); color: var(--danger); }
+    .badge-lecturer { background: var(--warn-bg); color: var(--warn); }
+    .slot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.75rem;
+    }
+    .slot-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      background: #fafcff;
+    }
+    .slot-title { font-weight: 600; margin-bottom: 0.25rem; }
+    .slot-meta { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.55rem; }
+    .suggestions-panel {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed var(--border);
+    }
+    .suggestion-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.55rem 0.7rem;
+      margin-top: 0.45rem;
+      background: #f0f6ff;
+      border: 1px solid #c7dbff;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { background: #f1f5f9; font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Conflict Resolver &amp; AI Rescheduling — SEVIMA-Mini</h1>
+      <p>Deteksi bentrok jadwal kuliah, saran alternatif AI tervalidasi, dan sinkronisasi outbox &amp; KRS.</p>
+    </div>
+    <div class="toolbar">
+      <label for="roleSelect">Role (Header <code>X-Role</code>):</label>
+      <select id="roleSelect">
+        <option value="admin" selected>admin</option>
+        <option value="mahasiswa">mahasiswa (uji 403)</option>
+      </select>
+      <button class="btn btn-secondary" type="button" onclick="muatData()">Muat Ulang</button>
+      <a class="link-ics" href="/api/mahasiswa/2025001-0001/jadwal.ics" target="_blank" rel="noopener">
+        Unduh .ics Budi (2025001-0001)
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <div id="statusBanner" class="banner" role="status"></div>
+
+    <section class="stats">
+      <div class="stat-card">
+        <div class="num" id="statTotalJadwal">-</div>
+        <div class="lbl">Total Jadwal Tersimpan</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statTotalKonflik">-</div>
+        <div class="lbl">Konflik Terdeteksi</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statRoomKonflik">-</div>
+        <div class="lbl">Bentrok Ruangan</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statLecturerKonflik">-</div>
+        <div class="lbl">Bentrok Dosen</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Daftar Konflik Jadwal</h2>
+      <div id="conflictList"></div>
+    </section>
+
+    <section class="card" style="margin-top: 1.5rem;">
+      <h2 style="margin-top: 0;">Daftar Seluruh Jadwal</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Kelas &amp; Mata Kuliah</th>
+              <th>Hari &amp; Jam</th>
+              <th>Ruang (Kap.)</th>
+              <th>Peserta</th>
+              <th>Dosen</th>
+              <th>Seq</th>
+            </tr>
+          </thead>
+          <tbody id="scheduleTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const NAMA_HARI = { 1: "Senin", 2: "Selasa", 3: "Rabu", 4: "Kamis", 5: "Jumat", 6: "Sabtu" };
+    let jadwalById = new Map();
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function fmtJam(jamStr) {
+      return String(jamStr ?? "").slice(0, 5);
+    }
+
+    function currentRole() {
+      return document.getElementById("roleSelect").value;
+    }
+
+    function tampilkanBanner(tipe, pesan) {
+      const el = document.getElementById("statusBanner");
+      el.className = "banner " + (tipe === "ok" ? "ok" : "err");
+      el.textContent = pesan;
+    }
+
+    async function muatData() {
+      const [resJadwal, resKonflik] = await Promise.all([
+        fetch("/api/jadwal"),
+        fetch("/api/jadwal/conflicts"),
+      ]);
+      const daftarJadwal = await resJadwal.json();
+      const daftarKonflik = await resKonflik.json();
+
+      jadwalById = new Map(daftarJadwal.map((j) => [j.id, j]));
+      document.getElementById("statTotalJadwal").textContent = daftarJadwal.length;
+      document.getElementById("statTotalKonflik").textContent = daftarKonflik.length;
+      document.getElementById("statRoomKonflik").textContent =
+        daftarKonflik.filter((k) => k.type === "room_conflict").length;
+      document.getElementById("statLecturerKonflik").textContent =
+        daftarKonflik.filter((k) => k.type === "lecturer_conflict").length;
+
+      renderKonflik(daftarKonflik);
+      renderTabel(daftarJadwal);
+    }
+
+    function renderKonflik(daftarKonflik) {
+      const container = document.getElementById("conflictList");
+      if (!daftarKonflik.length) {
+        container.innerHTML =
+          '<div class="card"><strong>Tidak ada bentrok jadwal.</strong> Semua ruangan dan dosen bebas konflik.</div>';
+        return;
+      }
+
+      container.innerHTML = daftarKonflik
+        .map((k, idx) => {
+          const badgeCls = k.type === "room_conflict" ? "badge-room" : "badge-lecturer";
+          const labelTipe = k.type === "room_conflict" ? "Bentrok Ruangan" : "Bentrok Dosen";
+          const kartuSlot = k.affected
+            .map((jid) => {
+              const j = jadwalById.get(jid);
+              if (!j) return `<div class="slot-box">Jadwal #${escapeHtml(jid)}</div>`;
+              const hari = NAMA_HARI[j.hari] || `Hari ${j.hari}`;
+              return `
+                <div class="slot-box">
+                  <div class="slot-title">#${j.id} — ${escapeHtml(j.kode_mk)} Kelas ${escapeHtml(j.nama_kelas)} (${escapeHtml(j.nama_mk)})</div>
+                  <div class="slot-meta">
+                    ${escapeHtml(hari)}, ${fmtJam(j.jam_mulai)}–${fmtJam(j.jam_selesai)} &bull;
+                    Ruang <strong>${escapeHtml(j.ruangan_kode)}</strong> (kap. ${j.ruangan_kapasitas}, peserta ${j.peserta}) &bull;
+                    ${escapeHtml(j.dosen_nama)} &bull; Seq ${j.sequence}
+                  </div>
+                  <button class="btn btn-primary" type="button" onclick="cariSaran(${j.id}, ${idx})">
+                    Cari Saran AI
+                  </button>
+                  <div class="suggestions-panel" id="saran-${idx}-${j.id}" style="display:none;"></div>
+                </div>`;
+            })
+            .join("");
+
+          return `
+            <div class="card conflict-card">
+              <div class="conflict-head">
+                <span class="badge ${badgeCls}">${escapeHtml(labelTipe)}</span>
+                <span style="font-size:0.85rem; color:var(--muted);">Jadwal terlibat: #${k.affected.map(escapeHtml).join(" vs #")}</span>
+              </div>
+              <div class="slot-grid">${kartuSlot}</div>
+            </div>`;
+        })
+        .join("");
+    }
+
+    function renderTabel(daftarJadwal) {
+      const tbody = document.getElementById("scheduleTableBody");
+      tbody.innerHTML = daftarJadwal
+        .map((j) => {
+          const hari = NAMA_HARI[j.hari] || `Hari ${j.hari}`;
+          return `
+            <tr>
+              <td>#${j.id}</td>
+              <td><strong>${escapeHtml(j.kode_mk)}-${escapeHtml(j.nama_kelas)}</strong> ${escapeHtml(j.nama_mk)}</td>
+              <td>${escapeHtml(hari)} ${fmtJam(j.jam_mulai)}–${fmtJam(j.jam_selesai)}</td>
+              <td>${escapeHtml(j.ruangan_kode)} (${j.ruangan_kapasitas})</td>
+              <td>${j.peserta}</td>
+              <td>${escapeHtml(j.dosen_nama)}</td>
+              <td>${j.sequence}</td>
+            </tr>`;
+        })
+        .join("");
+    }
+
+    async function cariSaran(jadwalId, conflictIdx) {
+      const panel = document.getElementById(`saran-${conflictIdx}-${jadwalId}`);
+      panel.style.display = "block";
+      panel.innerHTML = "<em>Meminta saran alternatif tervalidasi...</em>";
+
+      const resp = await fetch(`/api/jadwal/${jadwalId}/suggestions`, {
+        headers: { "X-Role": currentRole() },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        panel.innerHTML = "";
+        tampilkanBanner("err", `Gagal (${resp.status}): ${err.detail || "Terjadi kesalahan"}`);
+        return;
+      }
+
+      const saranList = await resp.json();
+      if (!saranList.length) {
+        panel.innerHTML = "<em>Tidak ada alternatif slot bebas ditemukan.</em>";
+        return;
+      }
+
+      panel.innerHTML = saranList
+        .map((s) => {
+          const hari = NAMA_HARI[s.hari] || `Hari ${s.hari}`;
+          const payloadAttr = encodeURIComponent(JSON.stringify({
+            hari: s.hari,
+            jam_mulai: s.jam_mulai,
+            ruangan: s.ruangan,
+            reason: s.reason,
+          }));
+          return `
+            <div class="suggestion-item">
+              <div>
+                <strong>${escapeHtml(hari)}, ${fmtJam(s.jam_mulai)}–${fmtJam(s.jam_selesai)} @ ${escapeHtml(s.ruangan)}</strong><br />
+                <span>${escapeHtml(s.reason)}</span>
+              </div>
+              <button class="btn btn-success" type="button" onclick="terapkanSaran(${jadwalId}, '${payloadAttr}')">
+                Terapkan
+              </button>
+            </div>`;
+        })
+        .join("");
+    }
+
+    async function terapkanSaran(jadwalId, encodedPayload) {
+      const payload = JSON.parse(decodeURIComponent(encodedPayload));
+      const resp = await fetch(`/api/jadwal/${jadwalId}/apply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Role": currentRole(),
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        tampilkanBanner("err", `Gagal menerapkan (${resp.status}): ${body.detail || resp.statusText}`);
+        return;
+      }
+      tampilkanBanner(
+        "ok",
+        `Jadwal #${jadwalId} dipindahkan ke ${NAMA_HARI[body.hari] || body.hari} ${fmtJam(body.jam_mulai)}-${fmtJam(body.jam_selesai)} @ ${body.ruangan_kode} (SEQUENCE=${body.sequence}). KRS terdampak diinvalidasi & notifikasi dikirim.`
+      );
+      await muatData();
+    }
+
+    muatData();
+  </script>
+</body>
+</html>

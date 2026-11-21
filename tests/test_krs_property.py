@@ -106,12 +106,14 @@ def test_mk_diterima_tidak_pernah_bentrok(daftar_mk: list[MataKuliah]) -> None:
             assert _slot(mk_a).isdisjoint(_slot(mk_b))
 
 
-# 4 transisi sah ditulis langsung dari spesifikasi alur KRS (bukan diimpor dari TRANSITIONS).
+# 6 transisi sah ditulis langsung dari spesifikasi alur KRS (bukan diimpor dari TRANSITIONS).
 _TRANSISI_SAH: set[tuple[KRSStatus, Actor, KRSStatus]] = {
     (KRSStatus.DRAFT, Actor.MAHASISWA, KRSStatus.SUBMITTED),
     (KRSStatus.SUBMITTED, Actor.DOSEN_PA, KRSStatus.APPROVED),
     (KRSStatus.SUBMITTED, Actor.DOSEN_PA, KRSStatus.REVISION),
     (KRSStatus.REVISION, Actor.MAHASISWA, KRSStatus.SUBMITTED),
+    (KRSStatus.SUBMITTED, Actor.SISTEM, KRSStatus.REVISION),
+    (KRSStatus.APPROVED, Actor.SISTEM, KRSStatus.REVISION),
 }
 
 _SEMUA_KOMBINASI = list(itertools.product(KRSStatus, Actor, KRSStatus))
@@ -119,17 +121,17 @@ _TRANSISI_ILEGAL = [t for t in _SEMUA_KOMBINASI if t not in _TRANSISI_SAH]
 
 
 def test_jumlah_kombinasi_state_machine_lengkap() -> None:
-    """Memastikan ruang uji state machine mencakup tepat 4 sah + 28 ilegal = 32 kombinasi."""
-    assert len(_SEMUA_KOMBINASI) == 32
-    assert len(_TRANSISI_SAH) == 4
-    assert len(_TRANSISI_ILEGAL) == 28
+    """Memastikan ruang uji state machine mencakup tepat 6 sah + 42 ilegal = 48 kombinasi."""
+    assert len(_SEMUA_KOMBINASI) == 48
+    assert len(_TRANSISI_SAH) == 6
+    assert len(_TRANSISI_ILEGAL) == 42
 
 
 @pytest.mark.parametrize(("status_awal", "aktor", "status_tujuan"), _TRANSISI_ILEGAL)
 def test_transisi_ilegal_ditolak(
     status_awal: KRSStatus, aktor: Actor, status_tujuan: KRSStatus
 ) -> None:
-    """Exhaustive: ke-28 kombinasi ilegal wajib melempar TransitionError & menjaga status."""
+    """Exhaustive: ke-42 kombinasi ilegal wajib melempar TransitionError & menjaga status."""
     krs = KRS(nim="2025001-0001", semester="20251", status=status_awal)
     with pytest.raises(TransitionError):
         krs.transition(status_tujuan, aktor)
@@ -143,7 +145,7 @@ def test_transisi_ilegal_ditolak(
 def test_transisi_legal_berhasil(
     status_awal: KRSStatus, aktor: Actor, status_tujuan: KRSStatus
 ) -> None:
-    """Exhaustive: ke-4 kombinasi sah sesuai spesifikasi berhasil memindahkan status KRS."""
+    """Exhaustive: ke-6 kombinasi sah sesuai spesifikasi berhasil memindahkan status KRS."""
     krs = KRS(nim="2025001-0001", semester="20251", status=status_awal)
     krs.transition(status_tujuan, aktor)
     assert krs.status == status_tujuan

@@ -5,7 +5,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.routers.jadwal import router as jadwal_router
+from app.routers.jadwal import mahasiswa_router, router as jadwal_router
 from app.routers.krs import router as krs_router
 from app.routers.pmb import router as pmb_router
 from app.services.exceptions import KRSError, ScheduleError
@@ -14,9 +14,10 @@ app = FastAPI(
     title="SEVIMA-Mini — Modul PMB, KRS, & Jadwal API",
     description=(
         "REST API Penerimaan Mahasiswa Baru, Pengisian & State Machine KRS, "
-        "Approval/Revisi Dosen PA, Rekomendasi Jadwal CSP, dan Penjadwalan & Ruangan"
+        "Approval/Revisi Dosen PA, Penjadwalan & Ruangan, Observer/Outbox, "
+        "AI Rescheduling, Conflict Resolver UI, dan Ekspor iCalendar (.ics)"
     ),
-    version="1.3.0",
+    version="1.4.0",
 )
 
 
@@ -51,6 +52,7 @@ async def schedule_error_handler(_request: Request, exc: ScheduleError) -> JSONR
 app.include_router(pmb_router)
 app.include_router(krs_router)
 app.include_router(jadwal_router)
+app.include_router(mahasiswa_router)
 
 
 @app.get("/", tags=["Health"])
