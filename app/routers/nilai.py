@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -19,12 +19,23 @@ from app.schemas.nilai import (
     NilaiIn,
     NilaiOut,
     PesertaNilaiOut,
+    TranskripBiodataOut,
+    TranskripItemOut,
+    TranskripOut,
+    TranskripSemesterOut,
+    TranskripSummaryOut,
 )
-from app.services.gpa_calculator import GPACalculator, NilaiRepo
+from app.services.gpa_calculator import GPACalculator, NilaiRepo, TranskripAkademik
 from app.services.grade_service import (
     GradeService,
     PresensiPort,
     get_presensi_port,
+)
+from app.services.transcript_pdf import (
+    TranscriptPdfRenderer,
+    get_transcript_pdf_renderer,
+    render_transcript_html,
+    sanitize_filename_segment,
 )
 
 _NILAI_FORM_TEMPLATE = (
@@ -194,6 +205,51 @@ def get_ips(nim: str, semester: str, db: Session = Depends(get_db)) -> IPSOut:
     return IPSOut(nim=nim, semester=semester, ips=str(ips))
 
 
+def _ke_transkrip_out(transkrip: TranskripAkademik) -> TranskripOut:
+    """Memetakan model domain TranskripAkademik ke schema JSON dengan string Decimal."""
+    return TranskripOut(
+        biodata=TranskripBiodataOut(
+            nim=transkrip.biodata.nim,
+            nama=transkrip.biodata.nama,
+            program_studi=transkrip.biodata.program_studi,
+            fakultas=transkrip.biodata.fakultas,
+            angkatan=transkrip.biodata.angkatan,
+        ),
+        semesters=[
+            TranskripSemesterOut(
+                semester=sem.semester,
+                label_semester=sem.label_semester,
+                items=[
+                    TranskripItemOut(
+                        kode_mk=item.kode_mk,
+                        nama_mk=item.nama_mk,
+                        semester=item.semester,
+                        sks=item.sks,
+                        huruf=item.huruf,
+                        bobot=str(item.bobot),
+                        mutu=str(item.mutu),
+                        lulus=item.lulus,
+                        dipakai_ipk=item.dipakai_ipk,
+                    )
+                    for item in sem.items
+                ],
+                total_sks=sem.total_sks,
+                total_mutu=str(sem.total_mutu),
+                ips=str(sem.ips),
+            )
+            for sem in transkrip.semesters
+        ],
+        summary=TranskripSummaryOut(
+            total_sks_tempuh=transkrip.total_sks_tempuh,
+            total_sks_lulus=transkrip.total_sks_lulus,
+            total_mutu_lulus=str(transkrip.total_mutu_lulus),
+            ipk=str(transkrip.ipk),
+            predikat=transkrip.predikat,
+        ),
+        tanggal_cetak=transkrip.tanggal_cetak,
+    )
+
+
 @nilai_mahasiswa_router.get(
     "/{nim}/nilai/riwayat",
     response_model=list[GradeHistoryOut],
@@ -211,3 +267,64 @@ def get_riwayat_nilai(
     """Mengembalikan daftar lengkap audit perubahan nilai mahasiswa."""
     rows = GradeService(db, presensi).riwayat_nilai_mahasiswa(nim)
     return [GradeHistoryOut.model_validate(row) for row in rows]
+
+
+@nilai_mahasiswa_router.get(
+    "/{nim}/transkrip",
+    response_model=TranskripOut,
+    summary="Ambil catatan akademik lengkap lintas semester dan predikat (compute-on-read)",
+    responses={
+        200: {"description": "Catatan transkrip akademik mahasiswa"},
+        404: {"description": "Mahasiswa ber-NIM tidak ditemukan"},
+    },
+)
+def get_transcript(nim: str, db: Session = Depends(get_db)) -> TranskripOut:
+    """Menghitung dan mengembalikan transkrip akademik utuh mahasiswa sebagai JSON."""
+    transkrip = GPACalculator(NilaiRepo(db)).get_transcript(nim)
+    return _ke_transkrip_out(transkrip)
+
+
+@nilai_mahasiswa_router.get(
+    "/{nim}/transkrip/preview",
+    response_class=HTMLResponse,
+    summary="Pratinjau halaman HTML resmi Transkrip Akademik mahasiswa",
+    responses={
+        200: {"description": "Dokumen HTML transkrip akademik resmi siap cetak"},
+        404: {"description": "Mahasiswa ber-NIM tidak ditemukan"},
+    },
+)
+def preview_transcript_html(nim: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Merender tampilan web resmi transkrip akademik menggunakan template Jinja2."""
+    transkrip = GPACalculator(NilaiRepo(db)).get_transcript(nim)
+    return HTMLResponse(content=render_transcript_html(transkrip))
+
+
+@nilai_mahasiswa_router.get(
+    "/{nim}/transkrip.pdf",
+    summary="Generate dan unduh Transkrip Akademik resmi dalam format PDF",
+    responses={
+        200: {
+            "description": "File PDF transkrip akademik resmi",
+            "content": {"application/pdf": {}},
+        },
+        404: {"description": "Mahasiswa ber-NIM tidak ditemukan"},
+    },
+)
+def download_transcript_pdf(
+    nim: str,
+    inline: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    renderer: TranscriptPdfRenderer = Depends(get_transcript_pdf_renderer),
+) -> Response:
+    """Menghasilkan biner PDF transkrip resmi dengan logo, biodata, tabel MK, dan TTD Dekan."""
+    transkrip = GPACalculator(NilaiRepo(db)).get_transcript(nim)
+    pdf_bytes = renderer.render_pdf(transkrip)
+    safe_nim = sanitize_filename_segment(nim)
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="transkrip_{safe_nim}.pdf"'
+        },
+    )

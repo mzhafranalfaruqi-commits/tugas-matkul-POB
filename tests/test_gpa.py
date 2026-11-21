@@ -6,7 +6,16 @@ import random
 from hypothesis import given, settings, strategies as st
 import pytest
 
-from app.domain.gpa import NilaiRecord, Skala, hitung_ipk, hitung_ips
+from app.domain.gpa import (
+    NilaiRecord,
+    RekordNilaiLengkap,
+    Skala,
+    bangun_ringkasan_transkrip,
+    format_label_semester,
+    hitung_ipk,
+    hitung_ips,
+    tentukan_predikat,
+)
 
 SKALA_BAK = {
     "A": Skala(Decimal("4.00"), True),
@@ -149,3 +158,76 @@ def test_properti_urutan_record_tidak_memengaruhi_ipk(
     acak = list(records)
     random.Random(seed_acak).shuffle(acak)
     assert hitung_ipk(acak, SKALA_BAK) == hitung_ipk(records, SKALA_BAK)
+
+
+@pytest.mark.parametrize(
+    ("ipk", "sks_lulus", "harap"),
+    [
+        ("4.00", 0, "Belum Memenuhi Predikat"),
+        ("0.00", 0, "Belum Memenuhi Predikat"),
+        ("1.99", 10, "Belum Memenuhi Syarat Kelulusan"),
+        ("2.00", 10, "Cukup"),
+        ("2.49", 10, "Cukup"),
+        ("2.50", 10, "Memuaskan"),
+        ("2.99", 10, "Memuaskan"),
+        ("3.00", 10, "Sangat Memuaskan"),
+        ("3.49", 10, "Sangat Memuaskan"),
+        ("3.50", 10, "Cum Laude"),
+        ("4.00", 144, "Cum Laude"),
+    ],
+)
+def test_tentukan_predikat_batas(ipk: str, sks_lulus: int, harap: str) -> None:
+    """Memastikan batas predikat kelulusan tepat di seluruh titik batas IPK dan SKS."""
+    assert tentukan_predikat(Decimal(ipk), sks_lulus) == harap
+
+
+@pytest.mark.parametrize(
+    ("kode", "harap"),
+    [
+        ("20241", "2024/2025 Ganjil"),
+        ("20242", "2024/2025 Genap"),
+        ("20243", "2024/2025 Pendek"),
+        ("2024X", "2024X"),
+        ("GANJIL", "GANJIL"),
+    ],
+)
+def test_format_label_semester(kode: str, harap: str) -> None:
+    """Memastikan pemformatan label semester standar dan fallback kode tak baku."""
+    assert format_label_semester(kode) == harap
+
+
+def test_bangun_ringkasan_transkrip_pengulangan_gagal_dan_urutan() -> None:
+    """Memastikan pengelompokan semester menaik, penandaan MK dipakai_ipk, & tie-breaking."""
+    rekaman = [
+        # Sengaja dibalik urutannya dan ada MK mengulang + MK sama bobot (tie-break record_id)
+        RekordNilaiLengkap("IF102", "Struktur Data", "20242", 3, "B", record_id=20),
+        RekordNilaiLengkap("IF102", "Struktur Data", "20241", 3, "B", record_id=10),
+        RekordNilaiLengkap("IF101", "Algoritma", "20242", 3, "A", record_id=15),
+        RekordNilaiLengkap("IF101", "Algoritma", "20241", 3, "E", record_id=5),
+        RekordNilaiLengkap("MA101", "Kalkulus I", "20241", 3, "D", record_id=7),
+    ]
+    ringkas = bangun_ringkasan_transkrip(rekaman, SKALA_BAK)
+
+    assert [s.semester for s in ringkas.semesters] == ["20241", "20242"]
+    s1, s2 = ringkas.semesters
+    assert [(i.kode_mk, i.huruf, i.lulus, i.dipakai_ipk) for i in s1.items] == [
+        ("IF101", "E", False, False),
+        ("IF102", "B", True, True),  # tie-break: 20241 (id=10) menang atas 20242 (id=20)
+        ("MA101", "D", False, False),
+    ]
+    assert [(i.kode_mk, i.huruf, i.lulus, i.dipakai_ipk) for i in s2.items] == [
+        ("IF101", "A", True, True),
+        ("IF102", "B", True, False),  # nilai sama sudah terhitung di 20241
+    ]
+    assert s1.total_sks == 9
+    assert s1.total_mutu == Decimal("12.00")  # 0 + 9 + 3
+    assert s1.ips == Decimal("1.33")  # 12 / 9 = 1.333...
+    assert s2.total_sks == 6
+    assert s2.total_mutu == Decimal("21.00")  # 12 + 9
+    assert s2.ips == Decimal("3.50")
+
+    assert ringkas.total_sks_tempuh == 15
+    assert ringkas.total_sks_lulus == 6
+    assert ringkas.total_mutu_lulus == Decimal("21.00")
+    assert ringkas.ipk == Decimal("3.50")
+    assert ringkas.predikat == "Cum Laude"

@@ -1,6 +1,6 @@
 """Skema Pydantic v2 untuk Modul Nilai, Perhitungan IPS/IPK, dan Audit Trail."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -82,3 +82,57 @@ class PesertaNilaiOut(BaseModel):
     boleh_input: bool
     nilai: str | None
     ipk: str
+
+
+class TranskripBiodataOut(BaseModel):
+    """Biodata resmi mahasiswa pada header transkrip akademik."""
+
+    nim: str
+    nama: str
+    program_studi: str
+    fakultas: str
+    angkatan: str
+
+
+class TranskripItemOut(BaseModel):
+    """Satu baris mata kuliah dalam satu semester pada transkrip akademik."""
+
+    kode_mk: str
+    nama_mk: str
+    semester: str
+    sks: int
+    huruf: str
+    bobot: str
+    mutu: str
+    lulus: bool
+    dipakai_ipk: bool
+
+
+class TranskripSemesterOut(BaseModel):
+    """Rekap satu semester berisi daftar MK dan IPS semester terkait."""
+
+    semester: str
+    label_semester: str
+    items: list[TranskripItemOut]
+    total_sks: int
+    total_mutu: str
+    ips: str
+
+
+class TranskripSummaryOut(BaseModel):
+    """Ringkasan total SKS, mutu, IPK kumulatif, dan predikat kelulusan."""
+
+    total_sks_tempuh: int
+    total_sks_lulus: int
+    total_mutu_lulus: str
+    ipk: str
+    predikat: str
+
+
+class TranskripOut(BaseModel):
+    """Payload JSON lengkap catatan akademik lintas semester mahasiswa."""
+
+    biodata: TranskripBiodataOut
+    semesters: list[TranskripSemesterOut]
+    summary: TranskripSummaryOut
+    tanggal_cetak: date

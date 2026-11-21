@@ -12,13 +12,14 @@ from app.routers.pmb import router as pmb_router
 from app.services.exceptions import GradeError, KRSError, ScheduleError
 
 app = FastAPI(
-    title="SEVIMA-Mini — Modul PMB, KRS, Jadwal, & Nilai API",
+    title="SEVIMA-Mini — Modul PMB, KRS, Jadwal, Nilai, & Transkrip API",
     description=(
         "REST API Penerimaan Mahasiswa Baru, Pengisian & State Machine KRS, "
         "Penjadwalan & Ruangan, Observer/Outbox, AI Rescheduling, Conflict Resolver UI, "
-        "Ekspor iCalendar (.ics), Input Nilai Berpenjaga, Kalkulator IPS/IPK, & Audit Trail"
+        "Ekspor iCalendar (.ics), Input Nilai Berpenjaga, Kalkulator IPS/IPK, Audit Trail, "
+        "& Generator Transkrip Akademik PDF"
     ),
-    version="1.5.0",
+    version="1.6.0",
 )
 
 
@@ -72,6 +73,6 @@ app.include_router(nilai_mahasiswa_router)
 def root() -> dict[str, str]:
     """Endpoint informasi dasar untuk memastikan layanan API berjalan."""
     return {
-        "message": "SEVIMA-Mini Modul PMB, KRS, & Jadwal API aktif",
+        "message": "SEVIMA-Mini Modul PMB, KRS, Jadwal, Nilai, & Transkrip API aktif",
         "docs": "/docs",
     }

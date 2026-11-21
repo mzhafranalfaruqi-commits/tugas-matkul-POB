@@ -292,3 +292,35 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
      Memilih menuliskan `GradeHistory` dan perubahan `krs_detail.nilai` dalam **satu transaksi atomik** di `GradeService.input_nilai()` (bukan DB trigger SQL), sehingga identitas `changed_by`, `reason` wajib saat edit, idempotency ketika huruf sama, serta portabilitas SQLite–MySQL/PostgreSQL tetap terjaga. Untuk kemudahan pembacaan riwayat mahasiswa, migrasi `0007` membuat SQL view `v_riwayat_nilai`.
 - **Konsekuensi & Pertimbangan:**  
   - Limitasi lingkungan pengujian: perubahan nilai langsung lewat query SQL manual di luar `GradeService` tidak otomatis tercatat di `grade_history` (konsekuensi disadari dari memilih service-layer audit alih-alih DB trigger); di produksi, hak akses tulis langsung ke `krs_detail.nilai` dan `UPDATE`/`DELETE` pada `grade_history` harus dibatasi per role DB.
+
+---
+
+## ADR-018: Aturan Predikat Kelulusan & `get_transcript(nim)` Compute-on-Read
+
+- **Status:** Diterima (Minggu 10) — *mencatat ekstensi syarat masa studi sebagai konfigurasi lanjutan*
+- **Konteks:**  
+  Modul transkrip menuntut `get_transcript(nim)` menghasilkan rekap lengkap seluruh semester beserta **predikat kelulusan** (*Cum Laude* bila `IPK >= 3.50`, *Sangat Memuaskan* `3.00–3.49`, dst.) sekaligus tetap konsisten ketika dosen baru saja menginput atau memperbaiki nilai.
+- **Keputusan:**  
+  1. **Fungsi Murni `bangun_ringkasan_transkrip()` & `tentukan_predikat()` (`app/domain/gpa.py`):**  
+     Menempatkan pengelompokan semester menaik, penandaan `dipakai_ipk` (tepat satu rekord terbaik yang `lulus == True` per `kode_mk` memakai urutan deterministik `record_id`), agregasi SKS/mutu, dan penentuan predikat pada fungsi murni berbasis `Decimal` (`ROUND_HALF_UP`): `total_sks_lulus <= 0` → *"Belum Memenuhi Predikat"*; `>= 3.50` → *"Cum Laude"*; `>= 3.00` → *"Sangat Memuaskan"*; `>= 2.50` → *"Memuaskan"*; `>= 2.00` → *"Cukup"*; di bawah `2.00` → *"Belum Memenuhi Syarat Kelulusan"*.
+  2. **Orkestrasi Compute-on-Read (`GPACalculator.get_transcript`):**  
+     Memperluas `NilaiRepo` dengan `biodata_mahasiswa(nim)` dan `records_lengkap(nim)` agar biodata + seluruh catatan mata kuliah ber-nilai diambil saat diminta dan langsung diolah menjadi `TranskripAkademik`, meneruskan kebijakan compute-on-read pada **ADR-017**.
+- **Konsekuensi & Pertimbangan:**  
+  - Setiap perubahan nilai via `PUT /api/kelas/{kelas_id}/nilai/{nim}` langsung tercermin seketika pada `/transkrip`, `/transkrip/preview`, dan `/transkrip.pdf` tanpa *cache invalidation*.
+  - Peraturan akademik riil sebagian perguruan tinggi mensyaratkan ketentuan tambahan untuk *Cum Laude* (mis. tidak pernah mengulang MK / lama studi maksimal 8 semester); aturan saat ini mengikuti batas IPK pada spesifikasi modul dan dicatat agar mudah diperluas pada parameter `tentukan_predikat()` bila stakeholder menginginkannya.
+
+---
+
+## ADR-019: Dual Renderer (`ReportLab` PDF + `Jinja2` HTML Preview) vs `WeasyPrint`
+
+- **Status:** Diterima (Minggu 10)
+- **Konteks:**  
+  Spesifikasi Minggu 9–10 mengarahkan pembuatan generator PDF (*"ReportLab/WeasyPrint"*) sekaligus pembuatan template HTML bergaya CSS profesional menyerupai ijazah resmi. Pada lingkungan Windows maupun container Linux minimal, **WeasyPrint** bergantung pada pustaka native C (`GTK3`, `Pango`, `Cairo`, `HarfBuzz`) yang sering gagal terpasang atau menghasilkan tata letak berbeda lintas mesin.
+- **Keputusan:**  
+  1. **Satu Model Domain, Dua Renderer (`app/services/transcript_pdf.py`):**  
+     Memisahkan port abstrak `TranscriptPdfRenderer(Protocol)` dan memilih **`ReportLabTranscriptRenderer`** (Pure-Python `reportlab` Platypus) sebagai implementasi default untuk `GET /api/mahasiswa/{nim}/transkrip.pdf`, sementara template **Jinja2** ([app/templates/transkrip.html](../app/templates/transkrip.html)) melayani pratinjau web & mode cetak peramban (`GET /api/mahasiswa/{nim}/transkrip/preview`) dari objek `TranskripAkademik` yang sama.
+  2. **Keamanan & Ketahanan Tata Letak:**  
+     Template Jinja2 mengaktifkan `autoescape=select_autoescape(["html", "xml"])`, ReportLab melakukan `xml.sax.saxutils.escape()` sebelum membuat `Paragraph`, NIM pada header `Content-Disposition` disanitasi (`sanitize_filename_segment`), tabel semester memakai `repeatRows=1` untuk transkrip multi-halaman tanpa pernah membentuk `Table([])` kosong, dan blok ringkasan + TTD Dekan dibungkus `KeepTogether`.
+- **Konsekuensi & Pertimbangan:**  
+  - Generator PDF berjalan 100% deterministik tanpa dependensi biner OS eksternal dan dapat diekstrak langsung oleh `pypdf` saat pengujian.
+  - Trade-off: perubahan desain visual dokumen resmi perlu disinkronkan di dua tempat (`transkrip.html` dan `ReportLabTranscriptRenderer`). Bila kelak server produksi menjalankan Linux standar dengan WeasyPrint atau Chromium *headless*, tinggal mengganti implementasi `TranscriptPdfRenderer` lewat DI `get_transcript_pdf_renderer()`.

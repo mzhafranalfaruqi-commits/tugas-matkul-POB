@@ -297,6 +297,12 @@
                 <button class="btn btn-secondary" type="button" onclick="lihatRiwayatNim('${escapeHtml(p.nim)}')">
                   Riwayat
                 </button>
+                <a class="btn btn-secondary" href="/api/mahasiswa/${encodeURIComponent(p.nim)}/transkrip/preview" target="_blank" style="text-decoration:none; color:inherit;">
+                  Transkrip
+                </a>
+                <a class="btn btn-secondary" href="/api/mahasiswa/${encodeURIComponent(p.nim)}/transkrip.pdf" style="text-decoration:none; color:inherit;">
+                  PDF
+                </a>
               </td>
             </tr>`;
         })

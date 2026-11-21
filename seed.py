@@ -569,14 +569,76 @@ def seed_nilai_demo_data(db: Session) -> None:
     db.commit()
 
 
+def seed_transkrip_demo_data(db: Session) -> None:
+    """Menyiapkan dummy mahasiswa multi-semester (Dina) untuk demo Transkrip & PDF."""
+    prodi_ti = db.execute(
+        select(ProgramStudi).where(ProgramStudi.kode == "001")
+    ).scalar_one()
+    jalur_snbp = db.execute(
+        select(JalurMasuk).where(JalurMasuk.nama == "SNBP")
+    ).scalar_one()
+
+    dina_nim = "2025001-0004"
+    dina = db.execute(
+        select(CalonMahasiswa).where(CalonMahasiswa.nim == dina_nim)
+    ).scalar_one_or_none()
+    if dina is None:
+        db.add(
+            CalonMahasiswa(
+                nama_lengkap="Dina Kartika",
+                email="dina.demo@example.com",
+                phone="081234567893",
+                tanggal_lahir=date(2005, 11, 12),
+                alamat="Jl. Dago No. 18, Bandung",
+                program_studi_id=prodi_ti.id,
+                jalur_masuk_id=jalur_snbp.id,
+                status=StatusPMB.approved,
+                nim=dina_nim,
+                approved_at=datetime.now(timezone.utc),
+            )
+        )
+
+    counter = db.get(NimCounter, (2025, "001"))
+    if counter is None:
+        db.add(NimCounter(tahun=2025, kode_prodi="001", last_number=4))
+    elif counter.last_number < 4:
+        counter.last_number = 4
+    db.flush()
+
+    # 3 semester lengkap: 28 SKS lulus, 107.00 mutu -> IPK 3.82 ("Cum Laude")
+    dina_riwayat: dict[str, list[tuple[str, str]]] = {
+        "20241": [("IF101", "A"), ("MA101", "A"), ("IF208", "B")],
+        "20242": [("IF102", "A"), ("MA102", "B"), ("IF201", "A")],
+        "20251": [("IF203", "A"), ("IF205", "A"), ("IF206", "A")],
+    }
+    for sem, items in dina_riwayat.items():
+        krs_sem = db.execute(
+            select(KRS).where(KRS.nim == dina_nim, KRS.semester == sem)
+        ).scalar_one_or_none()
+        if krs_sem is None:
+            db.add(
+                KRS(
+                    nim=dina_nim,
+                    semester=sem,
+                    status=KRSStatus.APPROVED,
+                    dosen_pa_id=101,
+                    approved_at=datetime.now(timezone.utc),
+                    details=[KRSDetail(kode_mk=mk, nilai=h) for mk, h in items],
+                )
+            )
+
+    db.commit()
+
+
 def main() -> None:
-    """Menjalankan proses seeding PMB, KRS, Jadwal, dan demo Nilai secara idempotent."""
+    """Menjalankan proses seeding PMB, KRS, Jadwal, Nilai, dan Transkrip secara idempotent."""
     with SessionLocal() as db:
         seed_data(db)
         seed_krs_data(db)
         seed_jadwal_data(db)
         seed_nilai_demo_data(db)
-    print("Seeding data PMB, KRS, Jadwal, dan Nilai selesai.")
+        seed_transkrip_demo_data(db)
+    print("Seeding data PMB, KRS, Jadwal, Nilai, dan Transkrip selesai.")
 
 
 if __name__ == "__main__":

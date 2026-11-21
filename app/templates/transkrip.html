@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transkrip Akademik — {{ transkrip.biodata.nim }}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 15mm;
+    }
+    :root {
+      --navy: #102a43;
+      --gold: #b48a2c;
+      --border: #cbd5e1;
+      --bg: #eef2f6;
+      --surface: #ffffff;
+      --muted: #475569;
+      --text: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 1.5rem 1rem 3rem;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .toolbar {
+      max-width: 820px;
+      margin: 0 auto 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      justify-content: flex-end;
+    }
+    .btn {
+      display: inline-block;
+      padding: 0.5rem 0.95rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--navy);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: var(--navy);
+      color: #ffffff;
+      border-color: var(--navy);
+    }
+    .btn-primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
+    .sheet {
+      max-width: 820px;
+      margin: 0 auto;
+      background: var(--surface);
+      padding: 2rem 2.25rem;
+      border: 4px double var(--navy);
+      outline: 1px solid var(--gold);
+      outline-offset: -8px;
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      border-bottom: 2px solid var(--navy);
+      padding-bottom: 1rem;
+      margin-bottom: 1.15rem;
+    }
+    .header-text {
+      flex: 1;
+      text-align: center;
+    }
+    .univ-name {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--navy);
+    }
+    .univ-sub {
+      margin: 0.15rem 0 0.5rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .doc-title {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--navy);
+      text-decoration: underline;
+      text-decoration-color: var(--gold);
+      text-underline-offset: 5px;
+    }
+    .biodata {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.45rem 1.75rem;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .bio-row {
+      display: flex;
+      gap: 0.5rem;
+      font-size: 0.87rem;
+    }
+    .bio-label {
+      min-width: 112px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .semester-block {
+      margin-bottom: 1.2rem;
+    }
+    .semester-title {
+      margin: 0 0 0.4rem;
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--navy);
+      background: #f1f5f9;
+      padding: 0.35rem 0.6rem;
+      border-left: 4px solid var(--navy);
+    }
+    table.grades {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    table.grades th,
+    table.grades td {
+      border: 1px solid var(--border);
+      padding: 0.42rem 0.55rem;
+    }
+    table.grades th {
+      background: var(--navy);
+      color: #ffffff;
+      font-weight: 600;
+      text-align: left;
+    }
+    table.grades th.num,
+    table.grades td.num {
+      text-align: center;
+      width: 68px;
+    }
+    table.grades th.mutu,
+    table.grades td.mutu {
+      text-align: right;
+      width: 78px;
+    }
+    table.grades tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+    table.grades tfoot td {
+      background: #eef2f6;
+      font-weight: 700;
+      color: var(--navy);
+    }
+    .tag {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.08rem 0.38rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .tag-gagal { background: #fee2e2; color: #b91c1c; }
+    .tag-ulang { background: #fef3c7; color: #92400e; }
+    .empty-note {
+      border: 1px dashed var(--border);
+      padding: 1rem;
+      text-align: center;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+    }
+    .bottom-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1.5rem;
+      margin-top: 1.25rem;
+      border-top: 2px solid var(--navy);
+      padding-top: 1rem;
+      page-break-inside: avoid;
+    }
+    .summary-box {
+      flex: 1;
+      max-width: 390px;
+      border: 1px solid var(--navy);
+      border-radius: 6px;
+      padding: 0.75rem 0.95rem;
+      background: #f8fafc;
+    }
+    .summary-box h3 {
+      margin: 0 0 0.5rem;
+      font-size: 0.9rem;
+      color: var(--navy);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .sum-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.22rem 0;
+      border-bottom: 1px dotted var(--border);
+      font-size: 0.87rem;
+    }
+    .sum-row:last-child { border-bottom: none; }
+    .sum-row strong.highlight {
+      color: var(--navy);
+      font-size: 0.98rem;
+    }
+    .signature-box {
+      min-width: 240px;
+      text-align: left;
+      font-size: 0.87rem;
+    }
+    .sig-space {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-style: italic;
+      font-size: 0.76rem;
+    }
+    .doc-footer {
+      margin-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      padding-top: 0.45rem;
+      font-size: 0.74rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+    @media print {
+      body { background: #ffffff; padding: 0; }
+      .no-print { display: none !important; }
+      .sheet { box-shadow: none; max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <a class="btn" href="/api/kelas/nilai-form">Kembali ke Form Input Nilai</a>
+    <button type="button" class="btn" onclick="window.print()">Cetak Halaman</button>
+    <a class="btn btn-primary" href="/api/mahasiswa/{{ transkrip.biodata.nim | urlencode }}/transkrip.pdf">Unduh PDF Resmi</a>
+  </div>
+
+  <article class="sheet">
+    <header class="header">
+      <svg width="72" height="72" viewBox="0 0 80 80" aria-label="Logo Universitas SEVIMA-Mini" role="img">
+        <circle cx="40" cy="40" r="37" fill="#102a43" stroke="#b48a2c" stroke-width="3" />
+        <polygon points="40,12 64,23 64,44 40,67 16,44 16,23" fill="none" stroke="#b48a2c" stroke-width="2.2" />
+        <text x="40" y="45" text-anchor="middle" fill="#ffffff" font-family="Georgia, serif" font-size="18" font-weight="bold">SM</text>
+      </svg>
+      <div class="header-text">
+        <p class="univ-name">UNIVERSITAS SEVIMA-MINI</p>
+        <p class="univ-sub">Jl. Akademika No. 1, Kampus Terpadu Bandung &bull; Sistem Informasi Akademik</p>
+        <h1 class="doc-title">TRANSKRIP AKADEMIK</h1>
+      </div>
+    </header>
+
+    <section class="biodata" aria-label="Biodata Mahasiswa">
+      <div class="bio-row"><span class="bio-label">NIM</span><span>: <strong>{{ transkrip.biodata.nim }}</strong></span></div>
+      <div class="bio-row"><span class="bio-label">Program Studi</span><span>: {{ transkrip.biodata.program_studi }}</span></div>
+      <div class="bio-row"><span class="bio-label">Nama</span><span>: <strong>{{ transkrip.biodata.nama }}</strong></span></div>
+      <div class="bio-row"><span class="bio-label">Fakultas</span><span>: {{ transkrip.biodata.fakultas }}</span></div>
+      <div class="bio-row"><span class="bio-label">Angkatan</span><span>: {{ transkrip.biodata.angkatan }}</span></div>
+    </section>
+
+    {% if transkrip.semesters %}
+      {% for sem in transkrip.semesters %}
+      <section class="semester-block">
+        <h2 class="semester-title">Semester {{ sem.semester }} &mdash; {{ sem.label_semester }}</h2>
+        <table class="grades">
+          <thead>
+            <tr>
+              <th style="width: 88px;">Kode MK</th>
+              <th>Nama MK</th>
+              <th class="num">SKS</th>
+              <th class="num">Nilai</th>
+              <th class="mutu">Mutu</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in sem.items %}
+            <tr>
+              <td><strong>{{ item.kode_mk }}</strong></td>
+              <td>
+                {{ item.nama_mk }}
+                {% if not item.lulus %}
+                <span class="tag tag-gagal">Tidak Lulus</span>
+                {% elif not item.dipakai_ipk %}
+                <span class="tag tag-ulang">Diulang</span>
+                {% endif %}
+              </td>
+              <td class="num">{{ item.sks }}</td>
+              <td class="num"><strong>{{ item.huruf }}</strong></td>
+              <td class="mutu">{{ item.mutu }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2">Rekap Semester {{ sem.semester }} (IPS: {{ sem.ips }})</td>
+              <td class="num">{{ sem.total_sks }}</td>
+              <td class="num">-</td>
+              <td class="mutu">{{ sem.total_mutu }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </section>
+      {% endfor %}
+    {% else %}
+      <div class="empty-note">Belum ada mata kuliah yang memiliki nilai.</div>
+    {% endif %}
+
+    <section class="bottom-grid">
+      <div class="summary-box">
+        <h3>Ringkasan Prestasi Akademik</h3>
+        <div class="sum-row"><span>Total SKS Lulus</span><strong>{{ transkrip.total_sks_lulus }} SKS</strong></div>
+        <div class="sum-row"><span>Total SKS Ditempuh</span><span>{{ transkrip.total_sks_tempuh }} SKS</span></div>
+        <div class="sum-row"><span>Total Mutu</span><span>{{ transkrip.total_mutu_lulus }}</span></div>
+        <div class="sum-row"><span>IPK</span><strong class="highlight">{{ transkrip.ipk }}</strong></div>
+        <div class="sum-row"><span>Predikat Kelulusan</span><strong class="highlight">{{ transkrip.predikat }}</strong></div>
+      </div>
+
+      <div class="signature-box">
+        <div>Bandung, {{ tanggal_cetak_id }}</div>
+        <div>Dekan {{ transkrip.biodata.fakultas }},</div>
+        <div class="sig-space">[TTD Dekan / Cap Resmi Fakultas]</div>
+        <div><strong>Prof. Dr. Ir. Hendrawan Pratama, M.T.</strong></div>
+        <div>NIP. 196805121993031002</div>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      <span>Dokumen Transkrip Akademik Resmi &mdash; SEVIMA-Mini</span>
+      <span>Dicetak: {{ tanggal_cetak_id }}</span>
+    </footer>
+  </article>
+</body>
+</html>
