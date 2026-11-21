@@ -1,6 +1,7 @@
 """Model ORM SQLAlchemy 2.0 untuk modul Kartu Rencana Studi (KRS)."""
 
 from datetime import datetime, time, timezone
+from decimal import Decimal
 import enum
 
 from sqlalchemy import (
@@ -11,6 +12,7 @@ from sqlalchemy import (
     Enum as SAEnum,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Table,
     UniqueConstraint,
@@ -67,12 +69,15 @@ prerequisite = Table(
 
 
 class SkalaNilai(Base):
-    """Tabel pemetaan nilai huruf ke bobot numerik agar perbandingan kelulusan akurat."""
+    """Tabel pemetaan nilai huruf ke bobot Decimal dan status kelulusan."""
 
     __tablename__ = "skala_nilai"
 
     huruf: Mapped[str] = mapped_column(String(2), primary_key=True)
-    bobot: Mapped[float]
+    bobot: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
+    lulus: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("0")
+    )
 
 
 class MataKuliah(Base):

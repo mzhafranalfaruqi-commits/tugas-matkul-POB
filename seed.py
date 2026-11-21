@@ -1,6 +1,7 @@
-"""Script seeding data referensi PMB dan data dummy Modul KRS secara idempotent."""
+"""Script seeding data referensi PMB, KRS, Jadwal, dan demo Modul Nilai secara idempotent."""
 
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,11 +46,11 @@ DEFAULT_PRODI = [
 DEFAULT_JALUR = ["SNBP", "SNBT", "Mandiri"]
 
 DEFAULT_SKALA_NILAI = [
-    ("A", 4.0),
-    ("B", 3.0),
-    ("C", 2.0),
-    ("D", 1.0),
-    ("E", 0.0),
+    ("A", Decimal("4.00"), True),
+    ("B", Decimal("3.00"), True),
+    ("C", Decimal("2.00"), True),
+    ("D", Decimal("1.00"), False),
+    ("E", Decimal("0.00"), False),
 ]
 
 DEFAULT_MATAKULIAH = [
@@ -213,9 +214,13 @@ def seed_data(db: Session) -> None:
 
 def seed_krs_data(db: Session) -> None:
     """Mengisi data dummy skala nilai, mata kuliah, prasyarat, dan riwayat KRS Budi."""
-    for huruf, bobot in DEFAULT_SKALA_NILAI:
-        if db.get(SkalaNilai, huruf) is None:
-            db.add(SkalaNilai(huruf=huruf, bobot=bobot))
+    for huruf, bobot, lulus in DEFAULT_SKALA_NILAI:
+        skala = db.get(SkalaNilai, huruf)
+        if skala is None:
+            db.add(SkalaNilai(huruf=huruf, bobot=bobot, lulus=lulus))
+        else:
+            skala.bobot = bobot
+            skala.lulus = lulus
 
     for mk_data in DEFAULT_MATAKULIAH:
         if db.get(MataKuliah, mk_data["kode_mk"]) is None:
@@ -467,13 +472,111 @@ def seed_jadwal_data(db: Session) -> None:
     db.commit()
 
 
+def seed_nilai_demo_data(db: Session) -> None:
+    """Menyiapkan dummy mahasiswa Rina & Sari beserta KRS aktif untuk demo form nilai."""
+    prodi_ti = db.execute(
+        select(ProgramStudi).where(ProgramStudi.kode == "001")
+    ).scalar_one()
+    jalur_snbp = db.execute(
+        select(JalurMasuk).where(JalurMasuk.nama == "SNBP")
+    ).scalar_one()
+
+    k_if201_b = db.execute(
+        select(Kelas).where(
+            Kelas.kode_mk == "IF201", Kelas.nama == "B", Kelas.semester == "20251"
+        )
+    ).scalar_one()
+    k_if204_a = db.execute(
+        select(Kelas).where(
+            Kelas.kode_mk == "IF204", Kelas.nama == "A", Kelas.semester == "20251"
+        )
+    ).scalar_one()
+
+    demo_mhs = [
+        ("2025001-0002", "Rina Pratama", "rina.demo@example.com", "081234567891"),
+        ("2025001-0003", "Sari Wulandari", "sari.demo@example.com", "081234567892"),
+    ]
+    for nim, nama, email, phone in demo_mhs:
+        mhs = db.execute(
+            select(CalonMahasiswa).where(CalonMahasiswa.nim == nim)
+        ).scalar_one_or_none()
+        if mhs is None:
+            db.add(
+                CalonMahasiswa(
+                    nama_lengkap=nama,
+                    email=email,
+                    phone=phone,
+                    tanggal_lahir=date(2006, 8, 20),
+                    alamat="Jl. Ganesha No. 5, Bandung",
+                    program_studi_id=prodi_ti.id,
+                    jalur_masuk_id=jalur_snbp.id,
+                    status=StatusPMB.approved,
+                    nim=nim,
+                    approved_at=datetime.now(timezone.utc),
+                )
+            )
+    counter = db.get(NimCounter, (2025, "001"))
+    if counter is None:
+        db.add(NimCounter(tahun=2025, kode_prodi="001", last_number=3))
+    elif counter.last_number < 3:
+        counter.last_number = 3
+    db.flush()
+
+    # Riwayat nilai Rina (contoh perhitungan materi Minggu 9 -> 20241=2.44, 20242=2.00, IPK=3.08)
+    rina_riwayat: dict[str, list[tuple[str, str]]] = {
+        "20241": [("IF101", "E"), ("IF205", "A"), ("IF208", "B")],
+        "20242": [("IF101", "B"), ("IF102", "C"), ("IF201", "D")],
+    }
+    for sem, items in rina_riwayat.items():
+        krs_sem = db.execute(
+            select(KRS).where(KRS.nim == "2025001-0002", KRS.semester == sem)
+        ).scalar_one_or_none()
+        if krs_sem is None:
+            db.add(
+                KRS(
+                    nim="2025001-0002",
+                    semester=sem,
+                    status=KRSStatus.APPROVED,
+                    dosen_pa_id=101,
+                    details=[KRSDetail(kode_mk=mk, nilai=h) for mk, h in items],
+                )
+            )
+
+    # Enrol Rina & Sari ke kelas 20251 (IF201-B dan IF204-A) untuk demo form dosen
+    # Rina belum dinilai di 20251 (IPK tetap 3.08 dari 20241-20242); Sari sudah C di IF201/IF204 (untuk demo wajib alasan edit).
+    demo_aktif = {
+        "2025001-0002": [("IF201", k_if201_b.id, None), ("IF204", k_if204_a.id, None)],
+        "2025001-0003": [("IF201", k_if201_b.id, "C"), ("IF204", k_if204_a.id, "C")],
+    }
+    for nim, kelas_items in demo_aktif.items():
+        krs_aktif = db.execute(
+            select(KRS).where(KRS.nim == nim, KRS.semester == "20251")
+        ).scalar_one_or_none()
+        if krs_aktif is None:
+            db.add(
+                KRS(
+                    nim=nim,
+                    semester="20251",
+                    status=KRSStatus.APPROVED,
+                    dosen_pa_id=101,
+                    details=[
+                        KRSDetail(kode_mk=mk, kelas_id=kid, nilai=h)
+                        for mk, kid, h in kelas_items
+                    ],
+                )
+            )
+
+    db.commit()
+
+
 def main() -> None:
-    """Menjalankan proses seeding PMB, KRS, dan Jadwal secara idempotent."""
+    """Menjalankan proses seeding PMB, KRS, Jadwal, dan demo Nilai secara idempotent."""
     with SessionLocal() as db:
         seed_data(db)
         seed_krs_data(db)
         seed_jadwal_data(db)
-    print("Seeding data PMB, KRS, dan Jadwal selesai.")
+        seed_nilai_demo_data(db)
+    print("Seeding data PMB, KRS, Jadwal, dan Nilai selesai.")
 
 
 if __name__ == "__main__":

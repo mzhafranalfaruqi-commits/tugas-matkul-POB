@@ -1,4 +1,4 @@
-"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB, KRS, & Jadwal."""
+"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB, KRS, Jadwal, & Nilai."""
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -7,24 +7,26 @@ from fastapi.responses import JSONResponse
 
 from app.routers.jadwal import mahasiswa_router, router as jadwal_router
 from app.routers.krs import router as krs_router
+from app.routers.nilai import kelas_router, nilai_mahasiswa_router
 from app.routers.pmb import router as pmb_router
-from app.services.exceptions import KRSError, ScheduleError
+from app.services.exceptions import GradeError, KRSError, ScheduleError
 
 app = FastAPI(
-    title="SEVIMA-Mini — Modul PMB, KRS, & Jadwal API",
+    title="SEVIMA-Mini — Modul PMB, KRS, Jadwal, & Nilai API",
     description=(
         "REST API Penerimaan Mahasiswa Baru, Pengisian & State Machine KRS, "
-        "Approval/Revisi Dosen PA, Penjadwalan & Ruangan, Observer/Outbox, "
-        "AI Rescheduling, Conflict Resolver UI, dan Ekspor iCalendar (.ics)"
+        "Penjadwalan & Ruangan, Observer/Outbox, AI Rescheduling, Conflict Resolver UI, "
+        "Ekspor iCalendar (.ics), Input Nilai Berpenjaga, Kalkulator IPS/IPK, & Audit Trail"
     ),
-    version="1.4.0",
+    version="1.5.0",
 )
 
 
 @app.exception_handler(RequestValidationError)
 async def validasi_input(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Mengembalikan 422 pada rute /api/jadwal dan menyeragamkan 400 pada rute PMB/KRS."""
-    status_code = 422 if request.url.path.startswith("/api/jadwal") else 400
+    """Mengembalikan 422 pada rute /api/jadwal, /api/kelas, /api/mahasiswa dan 400 untuk PMB/KRS."""
+    rute_422 = ("/api/jadwal", "/api/kelas", "/api/mahasiswa")
+    status_code = 422 if request.url.path.startswith(rute_422) else 400
     return JSONResponse(
         status_code=status_code,
         content={"detail": jsonable_encoder(exc.errors())},
@@ -49,10 +51,21 @@ async def schedule_error_handler(_request: Request, exc: ScheduleError) -> JSONR
     )
 
 
+@app.exception_handler(GradeError)
+async def grade_error_handler(_request: Request, exc: GradeError) -> JSONResponse:
+    """Handler polimorfik tunggal yang memetakan setiap subkelas GradeError ke status HTTP-nya."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc)},
+    )
+
+
 app.include_router(pmb_router)
 app.include_router(krs_router)
 app.include_router(jadwal_router)
 app.include_router(mahasiswa_router)
+app.include_router(kelas_router)
+app.include_router(nilai_mahasiswa_router)
 
 
 @app.get("/", tags=["Health"])

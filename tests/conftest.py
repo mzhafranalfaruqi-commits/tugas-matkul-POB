@@ -4,13 +4,17 @@ from collections.abc import Generator
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import attach_sqlite_fk_pragma, get_db
 from app.main import app
 from app.models import Base, JalurMasuk, ProgramStudi
+from app.models.nilai import (
+    CREATE_VIEW_RIWAYAT_NILAI_SQL,
+    DROP_VIEW_RIWAYAT_NILAI_SQL,
+)
 
 
 @pytest.fixture
@@ -27,6 +31,8 @@ def db_session() -> Generator[Session, None, None]:
     )
 
     Base.metadata.create_all(bind=test_engine)
+    with test_engine.begin() as conn:
+        conn.execute(text(CREATE_VIEW_RIWAYAT_NILAI_SQL))
     db = TestingSessionLocal()
     try:
         db.add_all(
@@ -55,6 +61,8 @@ def db_session() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+        with test_engine.begin() as conn:
+            conn.execute(text(DROP_VIEW_RIWAYAT_NILAI_SQL))
         Base.metadata.drop_all(bind=test_engine)
         test_engine.dispose()
 

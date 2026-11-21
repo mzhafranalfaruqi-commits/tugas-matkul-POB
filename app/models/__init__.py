@@ -13,6 +13,7 @@ from app.models.krs import (
     TRANSITIONS,
     prerequisite,
 )
+from app.models.nilai import GradeHistory
 from app.models.pmb import (
     Base,
     CalonMahasiswa,
@@ -27,6 +28,7 @@ __all__ = [
     "Base",
     "CalonMahasiswa",
     "Dosen",
+    "GradeHistory",
     "Jadwal",
     "JalurMasuk",
     "Kelas",

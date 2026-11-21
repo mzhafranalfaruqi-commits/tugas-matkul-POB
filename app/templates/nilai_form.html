@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Input Nilai Dosen &amp; Audit Trail — SEVIMA-Mini</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --border: #dde3ee;
+      --text: #1c2434;
+      --muted: #607087;
+      --primary: #1f5eff;
+      --primary-hover: #1549d6;
+      --danger: #d63638;
+      --danger-bg: #fef1f1;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: #102a43;
+      color: #ffffff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 0.15rem 0 0; font-size: 0.85rem; color: #cbd5e1; }
+    main {
+      max-width: 1120px;
+      margin: 1.5rem auto;
+      padding: 0 1rem 2rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 1.25rem;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+    }
+    .field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 220px; }
+    .field label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+    select, input[type="text"], .btn {
+      padding: 0.45rem 0.7rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      border: 1px solid var(--border);
+    }
+    .btn { cursor: pointer; background: var(--surface); }
+    .btn-primary {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-secondary { background: #f1f5f9; }
+    .btn:disabled, select:disabled, input:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      background: #f3f4f6;
+    }
+    .banner {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; display: block; }
+    .banner.err { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th, td {
+      text-align: left;
+      padding: 0.6rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    th { background: #f1f5f9; font-weight: 600; }
+    .badge {
+      display: inline-block;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-lock { background: var(--danger-bg); color: var(--danger); }
+    .badge-ok { background: var(--ok-bg); color: var(--ok); }
+    .badge-warn { background: var(--warn-bg); color: var(--warn); }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Form Input Nilai Dosen &amp; Audit Trail — SEVIMA-Mini</h1>
+      <p>Penjaga ganda (Dosen Pengampu + Presensi ≥ 75%), IPK compute-on-read (Decimal), dan riwayat audit transaksi atomik.</p>
+    </div>
+  </header>
+
+  <main>
+    <div id="statusBanner" class="banner" role="status"></div>
+
+    <section class="card">
+      <div class="controls">
+        <div class="field" style="flex: 1;">
+          <label for="kelasSelect">Pilih Kelas</label>
+          <select id="kelasSelect"></select>
+        </div>
+        <div class="field" style="flex: 1;">
+          <label for="dosenSelect">Identitas Dosen Login (Header <code>X-Dosen-Id</code>)</label>
+          <select id="dosenSelect"></select>
+        </div>
+        <button class="btn btn-primary" type="button" onclick="muatPeserta()">Muat Daftar Peserta</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top: 0;">Daftar Peserta &amp; Input Nilai</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>NIM &amp; Nama</th>
+              <th>Presensi</th>
+              <th>Nilai Saat Ini</th>
+              <th>Pilih Huruf</th>
+              <th>Alasan (wajib saat edit)</th>
+              <th>IPK Live</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="pesertaBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <h2 style="margin:0;">Riwayat Perubahan Nilai (<code>v_riwayat_nilai</code>)</h2>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <input type="text" id="nimRiwayat" value="2025001-0002" placeholder="NIM mahasiswa" />
+          <button class="btn btn-secondary" type="button" onclick="muatRiwayat()">Lihat Riwayat</button>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top:0.85rem;">
+        <table>
+          <thead>
+            <tr>
+              <th>Waktu</th>
+              <th>MK</th>
+              <th>Lama &rarr; Baru</th>
+              <th>Pengubah</th>
+              <th>Alasan</th>
+            </tr>
+          </thead>
+          <tbody id="riwayatBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let daftarKelas = [];
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function tampilkanBanner(tipe, pesan) {
+      const el = document.getElementById("statusBanner");
+      el.className = "banner " + (tipe === "ok" ? "ok" : "err");
+      el.textContent = pesan;
+    }
+
+    async function inisialisasi() {
+      const resp = await fetch("/api/kelas");
+      daftarKelas = await resp.json();
+
+      const kelasSelect = document.getElementById("kelasSelect");
+      kelasSelect.innerHTML = daftarKelas
+        .map((k) => {
+          const pengampu = k.dosens.map((d) => `${d.nama} (#${d.id})`).join(", ") || "Belum ada pengampu";
+          return `<option value="${k.id}">${escapeHtml(k.kode_mk)}-${escapeHtml(k.nama_kelas)} ${escapeHtml(k.nama_mk)} (${escapeHtml(k.semester)}) — ${escapeHtml(pengampu)}</option>`;
+        })
+        .join("");
+
+      const semuaDosen = new Map();
+      for (const k of daftarKelas) {
+        for (const d of k.dosens) {
+          semuaDosen.set(d.id, d.nama);
+        }
+      }
+      const dosenSelect = document.getElementById("dosenSelect");
+      const opsiDosen = Array.from(semuaDosen.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([id, nama]) => `<option value="${id}">#${id} ${escapeHtml(nama)}</option>`);
+      opsiDosen.push('<option value="9999">#9999 Dosen Lain (uji 403 bukan pengampu)</option>');
+      dosenSelect.innerHTML = opsiDosen.join("");
+
+      // Otomatis pilih kelas pertama yang memiliki dosen pengampu, bila tersedia
+      const kelasDenganPengampu = daftarKelas.find((k) => k.dosens.length > 0 && k.kode_mk === "IF204")
+        || daftarKelas.find((k) => k.dosens.length > 0);
+      if (kelasDenganPengampu) {
+        kelasSelect.value = String(kelasDenganPengampu.id);
+        dosenSelect.value = String(kelasDenganPengampu.dosens[0].id);
+      }
+      kelasSelect.addEventListener("change", () => {
+        const terpilih = daftarKelas.find((k) => String(k.id) === kelasSelect.value);
+        if (terpilih && terpilih.dosens.length > 0) {
+          dosenSelect.value = String(terpilih.dosens[0].id);
+        }
+        muatPeserta();
+      });
+
+      await muatPeserta();
+      await muatRiwayat();
+    }
+
+    async function muatPeserta() {
+      const kelasId = document.getElementById("kelasSelect").value;
+      const dosenId = document.getElementById("dosenSelect").value;
+      const tbody = document.getElementById("pesertaBody");
+      if (!kelasId) {
+        tbody.innerHTML = '<tr><td colspan="7">Belum ada kelas tersedia.</td></tr>';
+        return;
+      }
+
+      const resp = await fetch(`/api/kelas/${kelasId}/peserta`, {
+        headers: { "X-Dosen-Id": dosenId },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        tbody.innerHTML = `<tr><td colspan="7">${escapeHtml(resp.status)} — ${escapeHtml(err.detail)}</td></tr>`;
+        tampilkanBanner("err", `Gagal memuat peserta (${resp.status}): ${err.detail}`);
+        return;
+      }
+
+      const peserta = await resp.json();
+      if (!peserta.length) {
+        tbody.innerHTML = '<tr><td colspan="7">Belum ada mahasiswa terdaftar pada kelas ini.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = peserta
+        .map((p) => {
+          const disabledAttr = p.boleh_input ? "" : "disabled";
+          const statusPresensi = p.boleh_input
+            ? `<span class="badge badge-ok">${escapeHtml(p.presensi)}%</span>`
+            : `<span class="badge badge-lock">${escapeHtml(p.presensi)}% (terkunci &lt; 75%)</span>`;
+          const placeholderAlasan = p.nilai ? "Wajib saat mengubah nilai" : "Opsional untuk input awal";
+          const opsiHuruf = ["A", "B", "C", "D", "E"]
+            .map((h) => `<option value="${h}" ${p.nilai === h ? "selected" : ""}>${h}</option>`)
+            .join("");
+          return `
+            <tr>
+              <td><strong>${escapeHtml(p.nim)}</strong><br />${escapeHtml(p.nama)}</td>
+              <td>${statusPresensi}</td>
+              <td>${p.nilai ? `<strong>${escapeHtml(p.nilai)}</strong>` : "<em>Belum diisi</em>"}</td>
+              <td>
+                <select id="huruf-${escapeHtml(p.nim)}" ${disabledAttr}>
+                  ${opsiHuruf}
+                </select>
+              </td>
+              <td>
+                <input type="text" id="alasan-${escapeHtml(p.nim)}" placeholder="${placeholderAlasan}" ${disabledAttr} />
+              </td>
+              <td><strong>${escapeHtml(p.ipk)}</strong></td>
+              <td>
+                <button class="btn btn-primary" type="button" ${disabledAttr} onclick="simpanNilai('${escapeHtml(p.nim)}')">
+                  Simpan
+                </button>
+                <button class="btn btn-secondary" type="button" onclick="lihatRiwayatNim('${escapeHtml(p.nim)}')">
+                  Riwayat
+                </button>
+              </td>
+            </tr>`;
+        })
+        .join("");
+    }
+
+    async function simpanNilai(nim) {
+      const kelasId = document.getElementById("kelasSelect").value;
+      const dosenId = document.getElementById("dosenSelect").value;
+      const huruf = document.getElementById(`huruf-${nim}`).value;
+      const alasan = document.getElementById(`alasan-${nim}`).value;
+
+      const resp = await fetch(`/api/kelas/${kelasId}/nilai/${encodeURIComponent(nim)}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dosen-Id": dosenId,
+        },
+        body: JSON.stringify({ huruf, alasan: alasan || null }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        tampilkanBanner("err", `Gagal menyimpan nilai (${resp.status}): ${body.detail || resp.statusText}`);
+        return;
+      }
+
+      document.getElementById("nimRiwayat").value = nim;
+      tampilkanBanner("ok", `Nilai ${nim} untuk ${body.kode_mk} berhasil disimpan sebagai ${body.huruf}.`);
+      await muatPeserta();
+      await muatRiwayat();
+    }
+
+    function lihatRiwayatNim(nim) {
+      document.getElementById("nimRiwayat").value = nim;
+      muatRiwayat();
+    }
+
+    async function muatRiwayat() {
+      const nim = document.getElementById("nimRiwayat").value.trim();
+      const tbody = document.getElementById("riwayatBody");
+      if (!nim) {
+        tbody.innerHTML = "";
+        return;
+      }
+
+      const resp = await fetch(`/api/mahasiswa/${encodeURIComponent(nim)}/nilai/riwayat`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+        tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(resp.status)} — ${escapeHtml(err.detail)}</td></tr>`;
+        return;
+      }
+
+      const rows = await resp.json();
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="5">Belum ada jejak perubahan nilai untuk NIM ini.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows
+        .map((r) => `
+          <tr>
+            <td>${escapeHtml(r.changed_at)}</td>
+            <td><strong>${escapeHtml(r.kode_mk)}</strong> (${escapeHtml(r.semester)})</td>
+            <td>${escapeHtml(r.old_value ?? "-")} &rarr; <strong>${escapeHtml(r.new_value)}</strong></td>
+            <td>${escapeHtml(r.pengubah)}</td>
+            <td>${escapeHtml(r.reason ?? "-")}</td>
+          </tr>`)
+        .join("");
+    }
+
+    inisialisasi();
+  </script>
+</body>
+</html>

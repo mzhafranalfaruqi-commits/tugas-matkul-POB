@@ -257,3 +257,38 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
      Melindungi endpoint mutasi dan resolver jadwal dengan `require_admin` yang memverifikasi header `X-Role: admin` (mengembalikan HTTP `403 Forbidden` bila tidak sesuai), disertai selektor peran pada UI [resolver.html](../app/templates/resolver.html) agar mahasiswa dan dosen dapat mendemonstrasikan kontrol akses secara langsung.
 - **Konsekuensi & Pertimbangan:**  
   - Penambahan `require_admin` bersifat eksplisit sebagai kontrol akses demo sebelum modul autentikasi penuh (JWT/OAuth2 + RBAC tervalidasi tanda tangan kriptografis) diimplementasikan; header `X-Role` **tidak boleh** dianggap aman di lingkungan produksi tanpa token terverifikasi.
+
+---
+
+## ADR-016: Penyimpanan Nilai di `krs_detail`, `skala_nilai` Berbasis `Numeric`/`lulus`, & Open Question `"≥ D (2.0)"`
+
+- **Status:** Diterima (Minggu 9) — *menunggu konfirmasi stakeholder terkait batas lulus `D` vs `C`*
+- **Konteks:**  
+  Dokumen tugas Minggu 9–10 menyebut tabel `grades`, namun sejak migrasi `0003` (Minggu 5) proyek sudah memiliki kolom `krs_detail.nilai` (ber-FK ke `skala_nilai.huruf`) yang dibaca langsung oleh query prasyarat `NOT EXISTS` di [app/services/krs_queries.py](../app/services/krs_queries.py). Selain itu, dokumen tugas pada bagian Business Rules memuat kalimat kontradiktif: *"Lulus MK jika nilai ≥ D (2.0)"*, padahal pada tabel skala nilai kita `D = 1.00` dan `2.00 = C` (selaras aturan prasyarat minimal `2.0` di Minggu 5).
+- **Keputusan:**  
+  1. **Satu Sumber Kebenaran di `krs_detail`:**  
+     Tidak membuat tabel `grades` terpisah guna mencegah dua sumber kebenaran (*split-brain*) antara nilai pada KRS dan modul nilai. Kolom `grade_history.grade_id` tetap memakai penamaan dokumen tugas dengan FK langsung ke `krs_detail.id` (`ON DELETE CASCADE`).
+  2. **Tipe `Numeric(3, 2)` & Aturan Kelulusan sebagai Data (`skala_nilai.lulus`):**  
+     Memperbarui `skala_nilai` pada migrasi `0007` menjadi `bobot Numeric(3, 2)` (dipetakan ke Python `Decimal`) serta menambah kolom `lulus Boolean` agar aturan batas lulus hidup di data, bukan di-*hardcode* dalam `hitung_ipk()`.
+  3. **Asumsi Sementara & Pertanyaan Terbuka ke Stakeholder:**  
+     Dengan mempertimbangkan keselarasan aturan prasyarat `bobot >= 2.0` dari Minggu 5, sistem sementara mengasumsikan **batas lulus minimal `C` (`A/B/C: lulus=True`, `D/E: lulus=False`)**, dan mencatat pertanyaan resmi ke dosen/bagian akademik: *"Apakah batas lulus mata kuliah adalah nilai minimal `D` (`1.00`), atau minimal `C` (`2.00`) sesuai aturan prasyarat dan angka `(2.0)` di dokumen?"*. Jika jawabannya minimal `D`, perubahan cukup memperbarui 1 baris data di `skala_nilai` tanpa mengubah satu baris kode pun.
+- **Konsekuensi & Pertimbangan:**  
+  - Dampak konversi ini terbukti signifikan secara kuantitatif (contoh Rina di [tests/test_gpa.py](../tests/test_gpa.py): `3.08` dengan minimal `C` vs `2.67` dengan minimal `D`, selisih `0.41` poin).
+  - Query prasyarat di Minggu 5 (`s.bobot >= 2.0`) dapat diselaraskan memakai `s.lulus = 1` setelah keputusan stakeholder final.
+
+---
+
+## ADR-017: Compute-on-Read IPK (`Decimal` + `ROUND_HALF_UP`), `PresensiPort` (DIP), & Audit Trail di Service Layer
+
+- **Status:** Diterima (Minggu 9)
+- **Konteks:**  
+  Perhitungan IPK menuntut presisi tinggi tanpa galat *floating-point* atau salah pembulatan (*banker's rounding*) serta harus selalu akurat ketika nilai baru masuk atau dikoreksi. Di saat yang sama, aturan blokir presensi `< 75%` bergantung pada modul presensi yang baru dibangun di Minggu 12, sedangkan audit perubahan nilai menuntut pencatatan dosen pengubah (`changed_by`) dan `reason`.
+- **Keputusan:**  
+  1. **Compute-on-Read & `Decimal` (`ROUND_HALF_UP`) + Output JSON String:**  
+     IPK dan IPS tidak disimpan sebagai kolom cache pada tabel mahasiswa, melainkan dihitung langsung dari record bernilai saat dibaca oleh fungsi murni [app/domain/gpa.py](../app/domain/gpa.py) melalui `NilaiRepo`. Perhitungan menggunakan `Decimal`, membulatkan **hanya sekali di akhir** (`Decimal("0.01")`, `ROUND_HALF_UP`), mengambil bobot terbaik per `kode_mk` sebelum menyaring kelulusan, dan mengembalikan nilai di API (`IPKOut`/`IPSOut`) sebagai string (`"3.08"`). Bila kelak laporan ribuan mahasiswa butuh cache, *outbox event* `NILAI_CHANGED` berpola Minggu 8 siap ditambahkan.
+  2. **Port Presensi Berpola *Dependency Inversion* (`PresensiPort`):**  
+     Mendefinisikan `PresensiPort(Protocol)` di [app/services/grade_service.py](../app/services/grade_service.py) dengan implementasi sementara `PresensiStub` / `DemoPresensiStub`. Ketika modul presensi Minggu 12 selesai, cukup menyuntikkan adaptor nyata tanpa memodifikasi `GradeService`.
+  3. **Audit Trail di Service Layer (`GradeService`) + View `v_riwayat_nilai` vs DB Trigger:**  
+     Memilih menuliskan `GradeHistory` dan perubahan `krs_detail.nilai` dalam **satu transaksi atomik** di `GradeService.input_nilai()` (bukan DB trigger SQL), sehingga identitas `changed_by`, `reason` wajib saat edit, idempotency ketika huruf sama, serta portabilitas SQLite–MySQL/PostgreSQL tetap terjaga. Untuk kemudahan pembacaan riwayat mahasiswa, migrasi `0007` membuat SQL view `v_riwayat_nilai`.
+- **Konsekuensi & Pertimbangan:**  
+  - Limitasi lingkungan pengujian: perubahan nilai langsung lewat query SQL manual di luar `GradeService` tidak otomatis tercatat di `grade_history` (konsekuensi disadari dari memilih service-layer audit alih-alih DB trigger); di produksi, hak akses tulis langsung ke `krs_detail.nilai` dan `UPDATE`/`DELETE` pada `grade_history` harus dibatasi per role DB.

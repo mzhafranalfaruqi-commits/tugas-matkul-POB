@@ -101,6 +101,30 @@ class ScheduleValidationError(ScheduleError):
     status_code = 422
 
 
+class GradeError(Exception):
+    """Base domain exception untuk seluruh pelanggaran aturan Modul Nilai & Transkrip."""
+
+    status_code: int = 400
+
+
+class GradeValidationError(GradeError):
+    """Dilempar bila presensi < 75%, huruf tak dikenal, atau edit tanpa alasan (HTTP 400)."""
+
+    status_code = 400
+
+
+class GradeForbiddenError(GradeError):
+    """Dilempar bila dosen yang menginput/melihat nilai bukan pengampu kelas (HTTP 403)."""
+
+    status_code = 403
+
+
+class GradeNotFoundError(GradeError):
+    """Dilempar bila mahasiswa, kelas, atau peserta di kelas tidak ditemukan (HTTP 404)."""
+
+    status_code = 404
+
+
 class ScheduleConflictError(ScheduleError):
     """Dilempar ketika jadwal yang disimpan bentrok ruangan atau dosen (HTTP 409)."""
 
