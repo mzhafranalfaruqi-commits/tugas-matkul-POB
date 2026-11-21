@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Keuangan (SPP) — SEVIMA-Mini</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --border: #dde3ee;
+      --text: #1c2434;
+      --muted: #607087;
+      --primary: #1f5eff;
+      --primary-hover: #1549d6;
+      --danger: #d63638;
+      --danger-bg: #fef1f1;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+      --info: #1d4ed8;
+      --info-bg: #eff6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: #102a43;
+      color: #ffffff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 0.15rem 0 0; font-size: 0.85rem; color: #cbd5e1; }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+    }
+    .nav-pill {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.14);
+      padding: 0.42rem 0.78rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 0.84rem;
+    }
+    .nav-pill:hover { background: rgba(255, 255, 255, 0.24); }
+    main {
+      max-width: 1220px;
+      margin: 1.4rem auto;
+      padding: 0 1rem 2.5rem;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.9rem;
+      margin-bottom: 1.25rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 1.25rem;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.95rem 1.1rem;
+    }
+    .kpi-card .lbl { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+    .kpi-card .val { font-size: 1.38rem; font-weight: 700; margin-top: 0.2rem; }
+    .kpi-card .sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.15rem; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 1.25rem;
+    }
+    h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.05rem;
+      color: #102a43;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .banner {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; display: block; }
+    .banner.err { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; display: block; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+      align-items: flex-end;
+    }
+    .field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 170px; }
+    .field label { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+    input, select, textarea, .btn {
+      padding: 0.45rem 0.7rem;
+      border-radius: 6px;
+      font-size: 0.86rem;
+      border: 1px solid var(--border);
+      font-family: inherit;
+    }
+    textarea { width: 100%; min-height: 92px; font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; }
+    .btn { cursor: pointer; background: var(--surface); font-weight: 600; }
+    .btn-sm { padding: 0.28rem 0.58rem; font-size: 0.78rem; }
+    .btn-primary { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success { background: var(--ok); color: #ffffff; border-color: var(--ok); }
+    .btn-warn { background: var(--warn); color: #ffffff; border-color: var(--warn); }
+    .btn-secondary { background: #f1f5f9; color: var(--text); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td {
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+    th {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+      background: #f8fafc;
+    }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .badge {
+      display: inline-block;
+      padding: 0.16rem 0.52rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-paid { background: var(--ok-bg); color: var(--ok); }
+    .badge-partial { background: var(--info-bg); color: var(--info); }
+    .badge-unpaid, .badge-warn { background: var(--warn-bg); color: var(--warn); }
+    .badge-overdue { background: var(--danger-bg); color: var(--danger); }
+    .badge-no_billing { background: #f1f5f9; color: var(--muted); }
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 0.25rem;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 999px;
+    }
+    .ai-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.85rem;
+      font-size: 0.9rem;
+    }
+    .rec-list { margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.86rem; }
+    .chart-box {
+      width: 100%;
+      overflow-x: auto;
+      padding-top: 0.25rem;
+    }
+    .muted { color: var(--muted); font-size: 0.82rem; }
+    .actions-cell { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Dashboard Keuangan &amp; Pembayaran SPP</h1>
+      <p>Monitoring real-time tagihan, webhook payment gateway, blokir KRS, APScheduler, &amp; AI Financial Insights</p>
+    </div>
+    <nav class="nav-links">
+      <a class="nav-pill" href="/docs">Swagger API</a>
+      <a class="nav-pill" href="/api/kelas/nilai-form">Form Nilai</a>
+      <a class="nav-pill" href="/api/jadwal/resolver">Resolver Jadwal</a>
+      <button class="btn btn-secondary" type="button" onclick="refreshAll()">Muat Ulang</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="banner" class="banner" role="status"></div>
+
+    <section class="kpi-grid" aria-label="Ringkasan KPI Keuangan">
+      <div class="kpi-card">
+        <div class="lbl">Total Tagihan SPP</div>
+        <div class="val" id="kpi-tagihan">-</div>
+        <div class="sub" id="kpi-jml-billing">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="lbl">Total Terbayar</div>
+        <div class="val" id="kpi-terbayar" style="color: var(--ok);">-</div>
+        <div class="sub" id="kpi-rate-sub">Collection rate: -</div>
+      </div>
+      <div class="kpi-card">
+        <div class="lbl">Sisa Tunggakan</div>
+        <div class="val" id="kpi-tunggakan" style="color: var(--danger);">-</div>
+        <div class="sub" id="kpi-overdue-sub">-</div>
+      </div>
+      <div class="kpi-card">
+        <div class="lbl">Status Blokir KRS</div>
+        <div class="val" id="kpi-blocked">-</div>
+        <div class="sub">Mahasiswa dengan tunggakan aktif</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Operasional Penagihan &amp; Simulasi Cron / Gateway</h2>
+      <div class="controls">
+        <div class="field">
+          <label for="gen-semester">Semester (5 digit)</label>
+          <input id="gen-semester" type="text" value="20262" maxlength="5" />
+        </div>
+        <div class="field">
+          <label for="gen-start">Tanggal Mulai Semester</label>
+          <input id="gen-start" type="date" value="2027-02-01" />
+        </div>
+        <button class="btn btn-primary" type="button" onclick="generateBilling()">Generate Tagihan Semester</button>
+        <button class="btn btn-warn" type="button" onclick="calculateLateFees()">Hitung Denda Keterlambatan</button>
+        <button class="btn btn-secondary" type="button" onclick="sendReminders()">Kirim Reminder Tunggakan</button>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card">
+        <h2>Collection Rate per Program Studi</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Program Studi</th>
+                <th class="num">Lunas / Mhs</th>
+                <th class="num">Terbayar</th>
+                <th>Collection Rate</th>
+              </tr>
+            </thead>
+            <tbody id="prodi-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Grafik Pembayaran Masuk per Bulan</h2>
+        <div class="chart-box" id="chart-container">
+          <p class="muted">Memuat grafik...</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>
+        <span>Rekap Keuangan per Mahasiswa &amp; Aksi Cepat</span>
+        <span class="muted" id="last-updated">-</span>
+      </h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>NIM</th>
+              <th>Mahasiswa</th>
+              <th>Prodi</th>
+              <th class="num">Total Tagihan</th>
+              <th class="num">Sudah Bayar</th>
+              <th class="num">Sisa</th>
+              <th>Status</th>
+              <th>KRS</th>
+              <th>Aksi Tagihan Aktif</th>
+            </tr>
+          </thead>
+          <tbody id="mahasiswa-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card">
+        <h2>AI Financial Insights &amp; Top Tunggakan</h2>
+        <div class="ai-box" id="ai-narrative">Memuat analisis keuangan...</div>
+        <div id="ai-recommendations"></div>
+        <div class="table-wrap" style="margin-top: 0.75rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>NIM</th>
+                <th>Nama</th>
+                <th class="num">Tunggakan</th>
+                <th class="num">Usia (Hari)</th>
+              </tr>
+            </thead>
+            <tbody id="ai-top-tbody"></tbody>
+          </table>
+        </div>
+        <details style="margin-top: 0.9rem;">
+          <summary style="cursor: pointer; font-weight: 600; font-size: 0.85rem;">Analisis Input CSV Kustom (`nim,jumlah,tanggal,status`)</summary>
+          <div style="margin-top: 0.6rem;">
+            <textarea id="csv-input">nim,jumlah,tanggal,status
+2025001-0001,5000000,2026-11-05,paid
+2025001-0003,5500000,2026-08-15,overdue
+2025004-0002,4000000,2026-11-18,unpaid</textarea>
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary btn-sm" type="button" onclick="analyzeCustomCsv()">Analisis CSV</button>
+              <button class="btn btn-secondary btn-sm" type="button" onclick="loadAiReport()">Reset ke Live DB</button>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <h2>APScheduler Cron Jobs &amp; Log Email Receipt</h2>
+        <div class="table-wrap" style="margin-bottom: 1rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Trigger</th>
+                <th>Next Run</th>
+              </tr>
+            </thead>
+            <tbody id="scheduler-tbody"></tbody>
+          </table>
+        </div>
+        <h3 style="margin: 0.5rem 0; font-size: 0.92rem; color: #102a43;">Log Receipt &amp; Reminder Terkirim</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Jenis</th>
+                <th>NIM / Email</th>
+                <th>Ringkasan</th>
+              </tr>
+            </thead>
+            <tbody id="receipts-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    function esc(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function fmtRp(val) {
+      const n = Number(val || 0);
+      return "Rp " + Math.round(n).toLocaleString("id-ID");
+    }
+
+    function showBanner(msg, ok = true) {
+      const el = document.getElementById("banner");
+      el.textContent = msg;
+      el.className = "banner " + (ok ? "ok" : "err");
+    }
+
+    function renderMonthlyChart(points) {
+      const box = document.getElementById("chart-container");
+      if (!points || points.length === 0) {
+        box.innerHTML = '<p class="muted">Belum ada transaksi pembayaran tercatat.</p>';
+        return;
+      }
+      const w = Math.max(420, points.length * 95);
+      const h = 190;
+      const padL = 40;
+      const padB = 34;
+      const padT = 24;
+      const maxVal = Math.max(...points.map(p => Number(p.total_pembayaran)), 1);
+      const barW = Math.min(48, Math.floor((w - padL - 20) / points.length) - 14);
+      const step = (w - padL - 20) / points.length;
+
+      let bars = "";
+      points.forEach((p, idx) => {
+        const val = Number(p.total_pembayaran);
+        const bh = Math.max(4, Math.round(((h - padT - padB) * val) / maxVal));
+        const x = Math.round(padL + idx * step + (step - barW) / 2);
+        const y = h - padB - bh;
+        const labelShort = (val / 1000000).toFixed(1) + "jt";
+        bars += `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" rx="4" fill="#1f5eff" />`;
+        bars += `<text x="${x + barW / 2}" y="${y - 6}" text-anchor="middle" font-size="11" fill="#1c2434" font-weight="600">${esc(labelShort)}</text>`;
+        bars += `<text x="${x + barW / 2}" y="${h - 12}" text-anchor="middle" font-size="11" fill="#607087">${esc(p.bulan)}</text>`;
+      });
+
+      box.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="Grafik pembayaran per bulan">
+        <line x1="${padL}" y1="${h - padB}" x2="${w - 10}" y2="${h - padB}" stroke="#cbd5e1" stroke-width="1" />
+        ${bars}
+      </svg>`;
+    }
+
+    async function loadDashboard() {
+      const res = await fetch("/api/keuangan/dashboard/data");
+      const data = await res.json();
+      const r = data.ringkasan;
+
+      document.getElementById("kpi-tagihan").textContent = fmtRp(r.total_tagihan);
+      document.getElementById("kpi-terbayar").textContent = fmtRp(r.total_terbayar);
+      document.getElementById("kpi-tunggakan").textContent = fmtRp(r.total_tunggakan);
+      document.getElementById("kpi-blocked").textContent = `${r.jumlah_krs_blocked} mhs`;
+      document.getElementById("kpi-jml-billing").textContent = `${r.jumlah_billing} tagihan (${r.jumlah_paid} lunas)`;
+      document.getElementById("kpi-rate-sub").textContent = `Collection rate: ${r.collection_rate_persen}%`;
+      document.getElementById("kpi-overdue-sub").textContent = `Overdue: ${r.jumlah_overdue} | Partial: ${r.jumlah_partial} | Unpaid: ${r.jumlah_unpaid}`;
+      document.getElementById("last-updated").textContent = `Diperbarui: ${new Date(data.generated_at).toLocaleString("id-ID")}`;
+
+      const prodiRows = data.per_program_studi.map(p => `
+        <tr>
+          <td><strong>${esc(p.nama_prodi)}</strong> <span class="muted">(${esc(p.kode_prodi)})</span></td>
+          <td class="num">${p.mahasiswa_lunas} / ${p.total_mahasiswa}</td>
+          <td class="num">${fmtRp(p.total_terbayar)}</td>
+          <td>
+            <div style="display:flex;justify-content:space-between;font-size:0.8rem;">
+              <span>${esc(p.collection_rate_persen)}%</span>
+            </div>
+            <div class="progress-track">
+              <div class="progress-fill" style="width:${Math.min(100, Number(p.collection_rate_persen))}%"></div>
+            </div>
+          </td>
+        </tr>
+      `).join("");
+      document.getElementById("prodi-tbody").innerHTML = prodiRows || '<tr><td colspan="4" class="muted">Belum ada data prodi.</td></tr>';
+
+      renderMonthlyChart(data.grafik_bulanan);
+
+      const mhsRows = data.per_mahasiswa.map(m => {
+        const unpaidBill = (m.billings || []).find(b => b.krs_blocked);
+        const aksiHtml = unpaidBill
+          ? `<div class="actions-cell">
+               <button class="btn btn-primary btn-sm" type="button" onclick="payManual(${unpaidBill.id}, '${esc(unpaidBill.remaining)}')">Bayar Lunas</button>
+               <button class="btn btn-success btn-sm" type="button" onclick="simulateWebhook(${unpaidBill.id}, '${esc(unpaidBill.remaining)}')">Webhook VA</button>
+             </div>`
+          : '<span class="muted">Lunas</span>';
+        const krsLabel = m.krs_blocked
+          ? '<span class="badge badge-overdue">Diblokir</span>'
+          : '<span class="badge badge-paid">Aman</span>';
+        return `
+          <tr>
+            <td><code>${esc(m.nim)}</code></td>
+            <td>${esc(m.nama_lengkap)}</td>
+            <td>${esc(m.program_studi)}</td>
+            <td class="num">${fmtRp(m.total_tagihan)}</td>
+            <td class="num">${fmtRp(m.sudah_bayar)}</td>
+            <td class="num"><strong>${fmtRp(m.sisa)}</strong></td>
+            <td><span class="badge badge-${esc(m.status_ringkas)}">${esc(m.status_ringkas)}</span></td>
+            <td>${krsLabel}</td>
+            <td>${aksiHtml}</td>
+          </tr>
+        `;
+      }).join("");
+      document.getElementById("mahasiswa-tbody").innerHTML = mhsRows || '<tr><td colspan="9" class="muted">Belum ada mahasiswa aktif.</td></tr>';
+    }
+
+    function renderAiReport(report) {
+      document.getElementById("ai-narrative").innerHTML = `
+        <div><strong>Periode ${esc(report.periode_bulan)}</strong> — Revenue bulan ini: <strong>${esc(report.ringkasan.total_revenue_bulan_ini_formatted)}</strong> | Collection rate: <strong>${esc(report.ringkasan.collection_rate_label)}</strong></div>
+        <p style="margin:0.45rem 0 0;">${esc(report.narasi_ai)}</p>
+      `;
+      const recs = (report.rekomendasi || []).map(r => `<li>${esc(r)}</li>`).join("");
+      document.getElementById("ai-recommendations").innerHTML = recs ? `<ul class="rec-list">${recs}</ul>` : "";
+
+      const topRows = (report.top_10_tunggakan || []).map(t => `
+        <tr>
+          <td><code>${esc(t.nim)}</code></td>
+          <td>${esc(t.nama || "-")}</td>
+          <td class="num"><strong>${esc(t.total_tunggakan_formatted)}</strong></td>
+          <td class="num">${t.hari_tunggakan} hr</td>
+        </tr>
+      `).join("");
+      document.getElementById("ai-top-tbody").innerHTML = topRows || '<tr><td colspan="4" class="muted">Tidak ada tunggakan.</td></tr>';
+    }
+
+    async function loadAiReport() {
+      const res = await fetch("/api/keuangan/ai-report");
+      renderAiReport(await res.json());
+    }
+
+    async function analyzeCustomCsv() {
+      const csv_data = document.getElementById("csv-input").value;
+      const res = await fetch("/api/keuangan/ai-report/csv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv_data }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        showBanner(body.detail || "Gagal menganalisis CSV", false);
+        return;
+      }
+      renderAiReport(body);
+      showBanner("Analisis CSV AI Financial Insights berhasil diperbarui.");
+    }
+
+    async function loadScheduler() {
+      const res = await fetch("/api/keuangan/scheduler/jobs");
+      const data = await res.json();
+      const rows = (data.jobs || []).map(j => `
+        <tr>
+          <td><strong>${esc(j.id)}</strong><br><span class="muted">${esc(j.name)}</span></td>
+          <td><code>${esc(j.trigger)}</code></td>
+          <td class="muted">${j.next_run_time ? esc(new Date(j.next_run_time).toLocaleString("id-ID")) : (data.running ? "-" : "Standby")}</td>
+        </tr>
+      `).join("");
+      document.getElementById("scheduler-tbody").innerHTML = rows;
+    }
+
+    async function loadReceipts() {
+      const res = await fetch("/api/keuangan/receipts");
+      const list = await res.json();
+      const rows = list.slice(0, 8).map(r => `
+        <tr>
+          <td><span class="badge ${r.jenis === "receipt" ? "badge-paid" : "badge-warn"}">${esc(r.jenis)}</span></td>
+          <td><code>${esc(r.nim)}</code><br><span class="muted">${esc(r.penerima_email)}</span></td>
+          <td>${esc(r.isi_ringkas)}</td>
+        </tr>
+      `).join("");
+      document.getElementById("receipts-tbody").innerHTML = rows || '<tr><td colspan="3" class="muted">Belum ada email receipt atau reminder yang dikirim sesi ini.</td></tr>';
+    }
+
+    async function payManual(billingId, amount) {
+      const res = await fetch("/api/keuangan/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          billing_id: billingId,
+          amount: amount,
+          method_code: "TUNAI",
+          notes: "Pelunasan manual via Dashboard Keuangan"
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        showBanner(body.detail || "Gagal mencatat pembayaran manual", false);
+        return;
+      }
+      showBanner(`Pembayaran manual tagihan #${billingId} sukses (${body.billing.status}).`);
+      await refreshAll();
+    }
+
+    async function simulateWebhook(billingId, amount) {
+      const payload = {
+        transaction_id: `GW-UI-${billingId}-${Date.now()}`,
+        billing_id: billingId,
+        amount: amount,
+        status: "settlement",
+        method: "VA_BCA",
+      };
+      const signRes = await fetch("/api/keuangan/webhook/sign-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const signed = await signRes.json();
+      const whRes = await fetch("/api/keuangan/webhook/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Signature": signed.signature,
+        },
+        body: signed.payload_json,
+      });
+      const body = await whRes.json();
+      if (!whRes.ok) {
+        showBanner(body.detail || "Webhook pembayaran ditolak", false);
+        return;
+      }
+      showBanner(`Webhook ${body.transaction_id} diterima (${body.action}). Status tagihan #${billingId}: ${body.billing_status}.`);
+      await refreshAll();
+    }
+
+    async function generateBilling() {
+      const semester = document.getElementById("gen-semester").value.trim();
+      const semester_start = document.getElementById("gen-start").value || null;
+      const res = await fetch("/api/keuangan/billing/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ semester, semester_start }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        showBanner(body.detail ? JSON.stringify(body.detail) : "Gagal generate billing", false);
+        return;
+      }
+      showBanner(`Generate semester ${body.semester} selesai: ${body.created_count} dibuat, ${body.skipped_count} dilewati.`);
+      await refreshAll();
+    }
+
+    async function calculateLateFees() {
+      const res = await fetch("/api/keuangan/billing/calculate-late-fees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await res.json();
+      showBanner(`Kalkulasi denda per ${body.as_of}: ${body.updated_count} tagihan diperbarui (+${fmtRp(body.total_denda_ditambahkan)}).`);
+      await refreshAll();
+    }
+
+    async function sendReminders() {
+      const res = await fetch("/api/keuangan/billing/send-reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await res.json();
+      showBanner(`Reminder dikirim ke ${body.reminded_count} tagihan jatuh tempo/menunggak.`);
+      await refreshAll();
+    }
+
+    async function refreshAll() {
+      await Promise.all([
+        loadDashboard(),
+        loadAiReport(),
+        loadScheduler(),
+        loadReceipts(),
+      ]);
+    }
+
+    refreshAll();
+  </script>
+</body>
+</html>

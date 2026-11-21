@@ -3,15 +3,18 @@
 from app.validators.base import KRSContext, ValidationResult, Validator, build_chain
 from app.validators.krs import (
     MAX_SKS,
+    BillingArrearsValidator,
     ConflictValidator,
     DuplicateValidator,
     PrerequisiteValidator,
     SKSValidator,
     bentrok,
+    cek_tunggakan_krs,
     default_krs_validators,
 )
 
 __all__ = [
+    "BillingArrearsValidator",
     "ConflictValidator",
     "DuplicateValidator",
     "KRSContext",
@@ -22,5 +25,6 @@ __all__ = [
     "Validator",
     "bentrok",
     "build_chain",
+    "cek_tunggakan_krs",
     "default_krs_validators",
 ]

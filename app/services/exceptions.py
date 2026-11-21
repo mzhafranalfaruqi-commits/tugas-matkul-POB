@@ -63,6 +63,12 @@ class KRSLockedError(KRSError):
     status_code = 409
 
 
+class KRSBillingBlockedError(KRSError):
+    """Dilempar ketika mahasiswa masih memiliki tunggakan SPP sehingga KRS diblokir (HTTP 403)."""
+
+    status_code = 403
+
+
 class StaleVersionError(KRSError):
     """Dilempar ketika versi KRS sudah berubah oleh proses lain (optimistic locking conflict, HTTP 409)."""
 
@@ -137,3 +143,33 @@ class ScheduleConflictError(ScheduleError):
     def body(self) -> dict[str, Any]:
         """Menyertakan daftar detail konflik agar frontend/admin dapat menindaklanjuti."""
         return super().body() | {"conflicts": [asdict(k) for k in self.konflik]}
+
+
+class BillingError(Exception):
+    """Base domain exception untuk seluruh pelanggaran aturan Modul Keuangan (SPP)."""
+
+    status_code: int = 400
+
+
+class BillingValidationError(BillingError):
+    """Dilempar bila nominal, metode pembayaran, atau CSV keuangan tidak valid (HTTP 400)."""
+
+    status_code = 400
+
+
+class WebhookSignatureError(BillingError):
+    """Dilempar bila signature HMAC webhook payment gateway hilang atau tidak cocok (HTTP 401)."""
+
+    status_code = 401
+
+
+class BillingNotFoundError(BillingError):
+    """Dilempar bila tagihan SPP atau mahasiswa tidak ditemukan (HTTP 404)."""
+
+    status_code = 404
+
+
+class PaymentConflictError(BillingError):
+    """Dilempar bila tagihan sudah lunas atau transaction_id bentrok (HTTP 409)."""
+
+    status_code = 409

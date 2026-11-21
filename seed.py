@@ -1,4 +1,4 @@
-"""Script seeding data referensi PMB, KRS, Jadwal, dan demo Modul Nilai secara idempotent."""
+"""Script seeding data referensi PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan (SPP) secara idempotent."""
 
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import (
+    Billing,
+    BillingStatus,
     CalonMahasiswa,
     Dosen,
     Jadwal,
@@ -18,6 +20,9 @@ from app.models import (
     KRSStatus,
     MataKuliah,
     NimCounter,
+    Payment,
+    PaymentMethod,
+    PaymentStatus,
     ProgramStudi,
     Ruangan,
     SkalaNilai,
@@ -630,15 +635,304 @@ def seed_transkrip_demo_data(db: Session) -> None:
     db.commit()
 
 
+def seed_keuangan_data(db: Session) -> None:
+    """Mengisi data prodi Ekonomi, metode bayar, mahasiswa lintas prodi, dan simulasi SPP 20261."""
+    prodi_ekonomi = db.execute(
+        select(ProgramStudi).where(ProgramStudi.kode == "004")
+    ).scalar_one_or_none()
+    if prodi_ekonomi is None:
+        prodi_ekonomi = ProgramStudi(
+            kode="004",
+            nama="Ekonomi Pembangunan",
+            fakultas="Fakultas Ekonomi dan Bisnis",
+        )
+        db.add(prodi_ekonomi)
+        db.flush()
+
+    prodi_by_kode = {
+        p.kode: p for p in db.scalars(select(ProgramStudi)).all()
+    }
+    jalur_snbp = db.execute(
+        select(JalurMasuk).where(JalurMasuk.nama == "SNBP")
+    ).scalar_one()
+
+    metode_list = [
+        ("VA_BCA", "Virtual Account BCA", "gateway_va"),
+        ("VA_BNI", "Virtual Account BNI", "gateway_va"),
+        ("QRIS", "QRIS Nasional", "gateway_qris"),
+        ("TRANSFER_BANK", "Transfer Bank Manual", "manual"),
+        ("TUNAI", "Loket Keuangan Kampus", "manual"),
+    ]
+    method_by_code: dict[str, PaymentMethod] = {}
+    for code, name, provider in metode_list:
+        pm = db.execute(
+            select(PaymentMethod).where(PaymentMethod.code == code)
+        ).scalar_one_or_none()
+        if pm is None:
+            pm = PaymentMethod(
+                code=code, name=name, provider=provider, is_active=True
+            )
+            db.add(pm)
+        method_by_code[code] = pm
+    db.flush()
+
+    # Tambah mahasiswa lintas prodi (SI, Teknik Elektro, Ekonomi Pembangunan) secara idempoten.
+    tambahan_mhs = [
+        ("2025004-0001", "Andi Wijaya", "andi.ekonomi@example.com", "081234567894", "004", 1),
+        ("2025004-0002", "Maya Putri", "maya.ekonomi@example.com", "081234567895", "004", 2),
+        ("2025004-0003", "Doni Pratama", "doni.ekonomi@example.com", "081234567896", "004", 3),
+        ("2025002-0001", "Citra Lestari", "citra.si@example.com", "081234567897", "002", 1),
+        ("2025003-0001", "Fajar Santoso", "fajar.te@example.com", "081234567898", "003", 1),
+        ("2025003-0002", "Hendra Gunawan", "hendra.te@example.com", "081234567899", "003", 2),
+    ]
+    max_nomor_per_prodi: dict[str, int] = {}
+    for nim, nama, email, phone, kode_prodi, nomor in tambahan_mhs:
+        mhs = db.execute(
+            select(CalonMahasiswa).where(CalonMahasiswa.nim == nim)
+        ).scalar_one_or_none()
+        if mhs is None:
+            db.add(
+                CalonMahasiswa(
+                    nama_lengkap=nama,
+                    email=email,
+                    phone=phone,
+                    tanggal_lahir=date(2006, 3, 15),
+                    alamat="Jl. Dipatiukur No. 25, Bandung",
+                    program_studi_id=prodi_by_kode[kode_prodi].id,
+                    jalur_masuk_id=jalur_snbp.id,
+                    status=StatusPMB.approved,
+                    nim=nim,
+                    approved_at=datetime.now(timezone.utc),
+                )
+            )
+        prev_max = max_nomor_per_prodi.get(kode_prodi, 0)
+        if nomor > prev_max:
+            max_nomor_per_prodi[kode_prodi] = nomor
+
+    for kode_prodi, max_nomor in max_nomor_per_prodi.items():
+        counter = db.get(NimCounter, (2025, kode_prodi))
+        if counter is None:
+            db.add(NimCounter(tahun=2025, kode_prodi=kode_prodi, last_number=max_nomor))
+        elif counter.last_number < max_nomor:
+            counter.last_number = max_nomor
+    db.flush()
+
+    # Skenario tagihan semester 20261 mencakup seluruh status (paid, partial, unpaid, overdue)
+    # serta sebaran pembayaran bulanan (Agustus-November 2026).
+    skenario_billing: list[
+        tuple[
+            str,
+            Decimal,
+            Decimal,
+            Decimal,
+            date,
+            BillingStatus,
+            list[tuple[str, str, Decimal, datetime, str, bool]],
+        ]
+    ] = [
+        (
+            "2025001-0001",
+            Decimal("5000000.00"),
+            Decimal("0.00"),
+            Decimal("5000000.00"),
+            date(2026, 8, 25),
+            BillingStatus.paid,
+            [
+                (
+                    "SEED-20261-2025001-0001-1",
+                    "VA_BCA",
+                    Decimal("5000000.00"),
+                    datetime(2026, 8, 10, 9, 15, tzinfo=timezone.utc),
+                    "webhook",
+                    True,
+                )
+            ],
+        ),
+        (
+            "2025001-0004",
+            Decimal("5000000.00"),
+            Decimal("0.00"),
+            Decimal("5000000.00"),
+            date(2026, 11, 25),
+            BillingStatus.paid,
+            [
+                (
+                    "SEED-20261-2025001-0004-1",
+                    "QRIS",
+                    Decimal("5000000.00"),
+                    datetime(2026, 11, 5, 10, 30, tzinfo=timezone.utc),
+                    "webhook",
+                    True,
+                )
+            ],
+        ),
+        (
+            "2025004-0001",
+            Decimal("4000000.00"),
+            Decimal("0.00"),
+            Decimal("4000000.00"),
+            date(2026, 11, 25),
+            BillingStatus.paid,
+            [
+                (
+                    "SEED-20261-2025004-0001-1",
+                    "VA_BNI",
+                    Decimal("4000000.00"),
+                    datetime(2026, 11, 12, 14, 0, tzinfo=timezone.utc),
+                    "webhook",
+                    True,
+                )
+            ],
+        ),
+        (
+            "2025002-0001",
+            Decimal("4500000.00"),
+            Decimal("0.00"),
+            Decimal("4500000.00"),
+            date(2026, 10, 30),
+            BillingStatus.paid,
+            [
+                (
+                    "SEED-20261-2025002-0001-1",
+                    "TRANSFER_BANK",
+                    Decimal("4500000.00"),
+                    datetime(2026, 10, 15, 11, 20, tzinfo=timezone.utc),
+                    "manual",
+                    True,
+                )
+            ],
+        ),
+        (
+            "2025001-0002",
+            Decimal("5000000.00"),
+            Decimal("0.00"),
+            Decimal("2500000.00"),
+            date(2026, 12, 5),
+            BillingStatus.partial,
+            [
+                (
+                    "SEED-20261-2025001-0002-1",
+                    "VA_BCA",
+                    Decimal("2500000.00"),
+                    datetime(2026, 10, 20, 8, 45, tzinfo=timezone.utc),
+                    "webhook",
+                    True,
+                )
+            ],
+        ),
+        (
+            "2025003-0001",
+            Decimal("5000000.00"),
+            Decimal("0.00"),
+            Decimal("3000000.00"),
+            date(2026, 12, 5),
+            BillingStatus.partial,
+            [
+                (
+                    "SEED-20261-2025003-0001-1",
+                    "TUNAI",
+                    Decimal("2000000.00"),
+                    datetime(2026, 9, 18, 13, 0, tzinfo=timezone.utc),
+                    "manual",
+                    True,
+                ),
+                (
+                    "SEED-20261-2025003-0001-2",
+                    "QRIS",
+                    Decimal("1000000.00"),
+                    datetime(2026, 11, 10, 15, 10, tzinfo=timezone.utc),
+                    "webhook",
+                    True,
+                ),
+            ],
+        ),
+        (
+            "2025004-0002",
+            Decimal("4000000.00"),
+            Decimal("0.00"),
+            Decimal("0.00"),
+            date(2026, 12, 5),
+            BillingStatus.unpaid,
+            [],
+        ),
+        (
+            "2025001-0003",
+            Decimal("5000000.00"),
+            Decimal("500000.00"),
+            Decimal("0.00"),
+            date(2026, 8, 15),
+            BillingStatus.overdue,
+            [],
+        ),
+        (
+            "2025004-0003",
+            Decimal("4000000.00"),
+            Decimal("400000.00"),
+            Decimal("0.00"),
+            date(2026, 8, 20),
+            BillingStatus.overdue,
+            [],
+        ),
+        (
+            "2025003-0002",
+            Decimal("5000000.00"),
+            Decimal("500000.00"),
+            Decimal("0.00"),
+            date(2026, 9, 1),
+            BillingStatus.overdue,
+            [],
+        ),
+    ]
+
+    for nim, amount, denda, paid_amount, due_dt, st, payment_items in skenario_billing:
+        billing = db.execute(
+            select(Billing).where(Billing.nim == nim, Billing.semester == "20261")
+        ).scalar_one_or_none()
+        if billing is None:
+            billing = Billing(
+                nim=nim,
+                semester="20261",
+                amount=amount,
+                denda=denda,
+                paid_amount=paid_amount,
+                due_date=due_dt,
+                status=st,
+            )
+            db.add(billing)
+            db.flush()
+
+        for tx_id, m_code, p_amt, p_at, src, r_sent in payment_items:
+            exists_tx = db.execute(
+                select(Payment).where(Payment.transaction_id == tx_id)
+            ).scalar_one_or_none()
+            if exists_tx is None:
+                db.add(
+                    Payment(
+                        billing_id=billing.id,
+                        payment_method_id=method_by_code[m_code].id,
+                        transaction_id=tx_id,
+                        amount=p_amt,
+                        status=PaymentStatus.success,
+                        source=src,
+                        paid_at=p_at,
+                        notes="Seed demo Modul Keuangan SPP",
+                        receipt_sent=r_sent,
+                    )
+                )
+
+    db.commit()
+
+
 def main() -> None:
-    """Menjalankan proses seeding PMB, KRS, Jadwal, Nilai, dan Transkrip secara idempotent."""
+    """Menjalankan proses seeding PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan secara idempotent."""
     with SessionLocal() as db:
         seed_data(db)
         seed_krs_data(db)
         seed_jadwal_data(db)
         seed_nilai_demo_data(db)
         seed_transkrip_demo_data(db)
-    print("Seeding data PMB, KRS, Jadwal, Nilai, dan Transkrip selesai.")
+        seed_keuangan_data(db)
+    print("Seeding data PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan selesai.")
 
 
 if __name__ == "__main__":

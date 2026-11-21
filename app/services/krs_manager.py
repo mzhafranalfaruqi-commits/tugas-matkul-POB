@@ -20,13 +20,18 @@ from app.models.krs import (
 from app.models.pmb import CalonMahasiswa
 from app.services.exceptions import (
     ForbiddenError,
+    KRSBillingBlockedError,
     KRSLockedError,
     KRSTidakDitemukan,
     KRSValidasiGagal,
     StaleVersionError,
 )
 from app.validators.base import KRSContext, ValidationResult, Validator, build_chain
-from app.validators.krs import default_krs_validators
+from app.validators.krs import (
+    BillingArrearsValidator,
+    cek_tunggakan_krs,
+    default_krs_validators,
+)
 
 EDITABLE = (KRSStatus.DRAFT, KRSStatus.REVISION)
 
@@ -69,6 +74,12 @@ class KRSManager:
         if mahasiswa is None:
             raise KRSTidakDitemukan(f"Mahasiswa dengan NIM {nim} tidak ditemukan")
         return mahasiswa
+
+    def _pastikan_bebas_tunggakan(self, nim: str) -> None:
+        """Memblokir pengisian/pengajuan KRS apabila mahasiswa masih memiliki tunggakan SPP."""
+        pesan = cek_tunggakan_krs(self.db, nim)
+        if pesan is not None:
+            raise KRSBillingBlockedError(pesan)
 
     def _tentukan_dosen_pa(self, nim: str) -> int | None:
         """Menentukan ID dosen PA dari parameter default atau riwayat KRS sebelumnya."""
@@ -127,6 +138,13 @@ class KRSManager:
             started_immediate = False
             try:
                 started_immediate = self._mulai_transaksi_terkunci()
+                try:
+                    self._pastikan_mahasiswa_bernim(nim)
+                    self._pastikan_bebas_tunggakan(nim)
+                except (KRSTidakDitemukan, KRSBillingBlockedError):
+                    if started_immediate:
+                        self.db.rollback()
+                    raise
                 krs = self._krs_terkunci(nim, buat_jika_belum_ada=True)
                 assert krs is not None
 
@@ -232,6 +250,10 @@ class KRSManager:
             .where(KRS.nim == nim, KRS.semester == self.semester)
         ).scalar_one_or_none()
         if krs is None or not krs.details:
+            if any(isinstance(v, BillingArrearsValidator) for v in self.validators):
+                pesan = cek_tunggakan_krs(self.db, nim)
+                if pesan is not None:
+                    return [ValidationResult(False, pesan)]
             return []
 
         gagal: dict[str, ValidationResult] = {}
@@ -278,6 +300,7 @@ class KRSManager:
                 )
 
             krs.cek_transisi(KRSStatus.SUBMITTED, Actor.MAHASISWA)
+            self._pastikan_bebas_tunggakan(nim)
 
             if not krs.details:
                 raise KRSValidasiGagal("KRS kosong tidak dapat diajukan")

@@ -85,6 +85,7 @@ def get_krs(
         400: {
             "description": "Gagal aturan validasi KRS (duplikat, SKS > 24, prasyarat belum lulus, atau jadwal bentrok)"
         },
+        403: {"description": "KRS diblokir karena mahasiswa masih memiliki tunggakan SPP"},
         404: {"description": "Mahasiswa ber-NIM atau mata kuliah tidak ditemukan"},
         409: {"description": "Konflik status atau versi KRS (sudah SUBMITTED/APPROVED)"},
     },
@@ -157,6 +158,7 @@ def validate_krs(
     responses={
         200: {"description": "KRS berhasil diajukan ke Dosen PA"},
         400: {"description": "KRS kosong atau gagal validasi ulang sebelum pengajuan"},
+        403: {"description": "KRS diblokir karena mahasiswa masih memiliki tunggakan SPP"},
         404: {"description": "Mahasiswa ber-NIM atau KRS semester terkait tidak ditemukan"},
         409: {"description": "Konflik state machine (status KRS bukan DRAFT/REVISION) atau versi berubah"},
     },

@@ -324,3 +324,57 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
 - **Konsekuensi & Pertimbangan:**  
   - Generator PDF berjalan 100% deterministik tanpa dependensi biner OS eksternal dan dapat diekstrak langsung oleh `pypdf` saat pengujian.
   - Trade-off: perubahan desain visual dokumen resmi perlu disinkronkan di dua tempat (`transkrip.html` dan `ReportLabTranscriptRenderer`). Bila kelak server produksi menjalankan Linux standar dengan WeasyPrint atau Chromium *headless*, tinggal mengganti implementasi `TranscriptPdfRenderer` lewat DI `get_transcript_pdf_renderer()`.
+
+---
+
+## ADR-020: Skema Keuangan `Numeric(14, 2)`, Tarif SPP Berbasis Prodi, & Kebijakan Denda Keterlambatan
+
+- **Status:** Diterima (Minggu 11)
+- **Konteks:**  
+  Modul Keuangan (SPP) membutuhkan tabel `payment_method`, `billing`, dan `payment` dengan 4 status (`unpaid`, `partial`, `paid`, `overdue`), pembuatan tagihan otomatis per semester berdasarkan program studi (Teknik `Rp 5.000.000`, Ekonomi `Rp 4.000.000`), jatuh tempo 2 minggu setelah semester mulai, serta perhitungan denda keterlambatan tanpa kesalahan pembulatan *floating-point*.
+- **Keputusan:**  
+  1. **Presisi `Numeric(14, 2)` & Fungsi Murni `Decimal` (`app/domain/keuangan.py`):**  
+     Seluruh kolom nominal uang (`billing.amount`, `billing.denda`, `billing.paid_amount`, `payment.amount`) memakai tipe SQL `Numeric(14, 2)` yang dipetakan ke Python `Decimal` dan dibulatkan dengan `ROUND_HALF_UP`.
+  2. **Penentuan Tarif Prodi dengan Fallback Aman:**  
+     `tentukan_tarif_spp(nama_prodi, fakultas)` memetakan program studi Teknik → `5.000.000,00`, Ekonomi/Manajemen/Akuntansi → `4.000.000,00`, serta prodi lainnya (mis. Sistem Informasi) ke tarif default `4.500.000,00`, dengan `due_date = semester_start + 14 hari` dan status awal `unpaid`.
+  3. **Kebijakan Denda Keterlambatan Terbatas:**  
+     Denda keterlambatan dihitung sebesar `0,5%` per hari setelah `due_date` dengan batas maksimum `10%` dari pokok tagihan (`DEFAULT_TARIF_DENDA_HARIAN = 0.005`, `DEFAULT_MAKS_DENDA_PERSEN = 0.10`).
+- **Konsekuensi & Pertimbangan:**  
+  - Perhitungan nominal, cicilan `partial -> paid`, dan batas denda menjadi 100% deterministik serta mudah diuji dengan *property-based testing* (`tests/test_keuangan_property.py`).
+  - Apabila institusi kelak menerapkan tarif per angkatan atau tabel master tarif terpisah, cukup mengganti fungsi penentu tarif di service layer tanpa mengubah model transaksi `Billing`/`Payment`.
+
+---
+
+## ADR-021: Keamanan Webhook HMAC-SHA256, Idempotency `transaction_id`, & Receipt Pasca-Commit
+
+- **Status:** Diterima (Minggu 11)
+- **Konteks:**  
+  Endpoint webhook notifikasi pembayaran (`POST /api/keuangan/webhook/payment`) rentan terhadap pemalsuan request pihak ketiga, duplikasi pengiriman (*webhook retry* dari gateway), serta kegagalan I/O layanan email yang tidak boleh membatalkan pencatatan dana yang sudah masuk.
+- **Keputusan:**  
+  1. **Verifikasi Signature HMAC-SHA256 `hmac.compare_digest`:**  
+     Request webhook membaca *raw body* mentah dan memverifikasi header `X-Webhook-Signature` (mendukung prefiks opsional `sha256=`) secara *constant-time* sebelum parsing payload; kegagalan ditolak dengan HTTP `401 Unauthorized`.
+  2. **Transaksi Atomik & Idempotency `transaction_id`:**  
+     `BillingService.process_payment()` mengunci transaksi (`BEGIN IMMEDIATE` pada SQLite dan `with_for_update()` pada engine SQL lain), memeriksa keunikan `payment.transaction_id` (mengembalikan hasil idempoten bila `billing_id` dan nominal identik, atau `409 Conflict` bila berbeda), lalu memperbarui `billing.paid_amount`, status (`partial`/`paid`), catatan `Payment`, dan `Notifikasi` dalam satu `commit()`.
+  3. **Pengiriman Email Receipt Pasca-Commit (`EmailReceiptPort`):**  
+     Pengiriman email kuitansi dijalankan setelah `commit()` berhasil melalui abstraksi `EmailReceiptPort` (`LogEmailReceiptSender`) di dalam blok `try/except`, sehingga gangguan server email tidak pernah me-rollback pembayaran terkonfirmasi.
+- **Konsekuensi & Pertimbangan:**  
+  - Pengulangan webhook dari gateway tidak menimbulkan *double-credit* maupun pengiriman kuitansi ganda.
+  - Penggantian ke penyedia SMTP/SendGrid di produksi cukup dengan menyuntikkan adaptor baru yang memenuhi `EmailReceiptPort`.
+
+---
+
+## ADR-022: Penjadwalan Cron APScheduler, Integrasi Blokir KRS (`403`), & AI Financial Insights
+
+- **Status:** Diterima (Minggu 11)
+- **Konteks:**  
+  Tagihan SPP harus dapat dibuat otomatis setiap awal semester dan pengingat tunggakan harus dikirim berkala lewat APScheduler; mahasiswa bertunggakan wajib diblokir dari pengisian KRS; serta manajemen membutuhkan laporan AI Financial Insights berformat JSON.
+- **Keputusan:**  
+  1. **APScheduler Lifespan (`app/services/scheduler.py`):**  
+     Mengelola `BillingScheduler` berbasiskan `BackgroundScheduler(timezone="Asia/Jakarta")` dengan dua cron job (`semester_billing_generator` tiap 1 Februari & 1 Agustus pukul 00:05 WIB; `daily_overdue_reminder` tiap hari pukul 07:00 WIB) yang didaftarkan melalui FastAPI `lifespan` dan dapat dinonaktifkan dengan `DISABLE_SCHEDULER=1`.
+  2. **Integrasi Penjagaan Ganda pada Modul KRS:**  
+     Menambahkan `BillingArrearsValidator` ke rantai `default_krs_validators()` (dilewati aman saat `ctx.db is None` untuk *pure unit/property test*) dan pemeriksaan eksplisit `KRSManager._pastikan_bebas_tunggakan()` yang mengangkat `KRSBillingBlockedError` (HTTP `403`) pada `add_course` dan `submit_krs` selama mahasiswa memiliki tagihan `unpaid`, `partial`, atau `overdue`.
+  3. **AI Financial Insights Berbasis Agregasi Deterministik (`app/services/financial_ai.py`):**  
+     Seluruh metrik numerik (*total revenue bulan ini*, *collection rate %*, *Top 10 tunggakan terbesar*, dan jumlah penunggak `> 2 bulan` / `> 60 hari`) dihitung secara murni dan eksak oleh `analisis_keuangan_csv()` sebelum disusun menjadi narasi via port `FinancialNarrativeClient`, mencegah halusinasi angka keuangan.
+- **Konsekuensi & Pertimbangan:**  
+  - Pelunasan melalui webhook maupun manual seketika membuka akses KRS mahasiswa tanpa jeda sinkronisasi.
+  - Pada deployment multi-worker (`uvicorn --workers > 1`), scheduler sebaiknya dipindah ke satu proses worker khusus atau memakai *distributed job lock* agar cron job tidak berjalan ganda di tiap worker.
