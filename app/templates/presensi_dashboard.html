@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Presensi QR Code &amp; AI Insights — SEVIMA-Mini</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --border: #dde3ee;
+      --text: #1c2434;
+      --muted: #607087;
+      --primary: #1f5eff;
+      --primary-hover: #1549d6;
+      --danger: #d63638;
+      --danger-bg: #fef1f1;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --ok: #15803d;
+      --ok-bg: #f0fdf4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: #102a43;
+      color: #ffffff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 0.15rem 0 0; font-size: 0.85rem; color: #cbd5e1; }
+    .nav-links { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+    .nav-pill {
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.14);
+      padding: 0.42rem 0.78rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 0.84rem;
+    }
+    .nav-pill:hover { background: rgba(255, 255, 255, 0.24); }
+    main { max-width: 1220px; margin: 1.4rem auto; padding: 0 1rem 2.5rem; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+      gap: 1.25rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 1.25rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1.05rem; color: #102a43; }
+    .banner {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; display: block; }
+    .banner.err { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; display: block; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+    .field { display: flex; flex-direction: column; gap: 0.25rem; }
+    .field label { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+    input, select, textarea, .btn {
+      padding: 0.45rem 0.7rem;
+      border-radius: 6px;
+      font-size: 0.86rem;
+      border: 1px solid var(--border);
+      font-family: inherit;
+    }
+    textarea { width: 100%; min-height: 70px; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
+    .btn { cursor: pointer; background: var(--surface); font-weight: 600; text-decoration: none; display: inline-block; }
+    .btn-primary { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success { background: var(--ok); color: #ffffff; border-color: var(--ok); }
+    .btn-secondary { background: #f1f5f9; color: var(--text); }
+    .qr-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      padding: 0.85rem;
+      margin-top: 0.75rem;
+    }
+    .qr-preview img { width: 180px; height: 180px; border: 1px solid var(--border); background: #ffffff; border-radius: 6px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    th, td {
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    th {
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: #f8fafc;
+    }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .badge {
+      display: inline-block;
+      padding: 0.16rem 0.52rem;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-ok { background: var(--ok-bg); color: var(--ok); }
+    .badge-warn { background: var(--danger-bg); color: var(--danger); }
+    .ai-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.85rem;
+      font-size: 0.9rem;
+    }
+    .muted { color: var(--muted); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Presensi QR Code &amp; AI Attendance Insights</h1>
+      <p>Generate QR ber-JWT 15 menit, validasi scan lokasi &amp; jadwal, ekspor Excel, serta deteksi pola kehadiran</p>
+    </div>
+    <nav class="nav-links">
+      <a class="nav-pill" href="/docs">Swagger API</a>
+      <a class="nav-pill" href="/api/keuangan/dashboard">Keuangan</a>
+      <a class="nav-pill" href="/api/kelas/nilai-form">Form Nilai</a>
+      <button class="btn btn-secondary" type="button" onclick="refreshReports()">Muat Ulang</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="banner" class="banner" role="status"></div>
+
+    <div class="grid-2">
+      <section class="card">
+        <h2>1. Panel Dosen — Generate QR Sesi Kuliah</h2>
+        <div class="form-grid">
+          <div class="field" style="grid-column: 1 / -1;">
+            <label for="sched-select">Jadwal Kuliah</label>
+            <select id="sched-select" onchange="onScheduleChange()"></select>
+          </div>
+          <div class="field">
+            <label for="qr-minutes">Valid (Menit, maks 30)</label>
+            <input id="qr-minutes" type="number" min="1" max="30" value="15" />
+          </div>
+          <div class="field">
+            <label for="qr-lat">Latitude Opsional</label>
+            <input id="qr-lat" type="number" step="0.0001" placeholder="-6.8915" />
+          </div>
+          <div class="field">
+            <label for="qr-lon">Longitude Opsional</label>
+            <input id="qr-lon" type="number" step="0.0001" placeholder="107.6107" />
+          </div>
+          <div class="field">
+            <label for="qr-rad">Radius (Meter)</label>
+            <input id="qr-rad" type="number" min="10" placeholder="100" />
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.6rem;">
+          <button class="btn btn-primary" type="button" onclick="generateQr()">Generate / Rotasi QR</button>
+          <a id="excel-link" class="btn btn-success" href="#" target="_blank" rel="noopener">Export Excel (.xlsx)</a>
+        </div>
+        <div id="qr-result" class="qr-preview" style="display:none;">
+          <img id="qr-img" alt="QR Presensi Kuliah" />
+          <div style="flex:1;min-width:210px;">
+            <div id="qr-meta" style="font-weight:600;"></div>
+            <div id="qr-countdown" class="muted" style="margin:0.25rem 0;"></div>
+            <label class="muted" for="qr-token-box">JWT Token (HS256)</label>
+            <textarea id="qr-token-box" readonly></textarea>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>2. Simulasi Scan Mahasiswa (`POST /attendance/scan`)</h2>
+        <div class="form-grid">
+          <div class="field">
+            <label for="scan-nim">NIM Mahasiswa</label>
+            <input id="scan-nim" type="text" value="2025001-0001" />
+          </div>
+          <div class="field">
+            <label for="scan-lat">Latitude Mahasiswa</label>
+            <input id="scan-lat" type="number" step="0.0001" placeholder="-6.8915" />
+          </div>
+          <div class="field">
+            <label for="scan-lon">Longitude Mahasiswa</label>
+            <input id="scan-lon" type="number" step="0.0001" placeholder="107.6107" />
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:0.8rem;">
+          <label for="scan-token">Token QR dari Dosen</label>
+          <textarea id="scan-token" placeholder="Tempel JWT token hasil generate QR di sini"></textarea>
+        </div>
+        <div style="display:flex;gap:0.6rem;">
+          <button class="btn btn-primary" type="button" onclick="scanQr()">Scan Presensi</button>
+          <button class="btn btn-secondary" type="button" onclick="loadMahasiswaReport()">Cek Rekap NIM</button>
+        </div>
+        <div id="mhs-report-box" style="margin-top:0.9rem;"></div>
+      </section>
+    </div>
+
+    <div class="grid-2">
+      <section class="card">
+        <h2>3. Laporan Presensi Kelas &amp; Peringatan &lt;75%</h2>
+        <div id="kelas-summary" class="muted" style="margin-bottom:0.6rem;">Pilih jadwal untuk melihat laporan kelas.</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>NIM</th>
+                <th>Nama</th>
+                <th class="num">Hadir</th>
+                <th class="num">Telat</th>
+                <th class="num">Alpha</th>
+                <th class="num">%</th>
+                <th>Syarat</th>
+              </tr>
+            </thead>
+            <tbody id="kelas-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>4. AI Attendance Insights &amp; Early Warning</h2>
+        <div class="ai-box" id="ai-narrative">Memuat analisis pola kehadiran...</div>
+        <div style="margin-bottom:0.65rem;">
+          <strong>Insights:</strong>
+          <ul id="ai-insights" style="margin:0.35rem 0 0;padding-left:1.2rem;font-size:0.86rem;"></ul>
+        </div>
+        <div>
+          <strong>Rekomendasi Aksi:</strong>
+          <ul id="ai-actions" style="margin:0.35rem 0 0;padding-left:1.2rem;font-size:0.86rem;"></ul>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    let schedules = [];
+    let countdownTimer = null;
+
+    function esc(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function showBanner(msg, ok = true) {
+      const el = document.getElementById("banner");
+      el.textContent = msg;
+      el.className = "banner " + (ok ? "ok" : "err");
+    }
+
+    function getSelectedSchedule() {
+      const id = Number(document.getElementById("sched-select").value);
+      return schedules.find(s => s.id === id) || null;
+    }
+
+    async function loadSchedules() {
+      const res = await fetch("/api/presensi/schedules");
+      schedules = await res.json();
+      const sel = document.getElementById("sched-select");
+      sel.innerHTML = schedules.map(s =>
+        `<option value="${s.id}">#${s.id} ${esc(s.kode_mk)}-${esc(s.nama_kelas)} (${esc(s.nama_mk)}) | ${esc(s.nama_hari)} ${esc(s.jam_mulai)}-${esc(s.jam_selesai)} @ ${esc(s.ruangan_kode)}</option>`
+      ).join("");
+      onScheduleChange();
+    }
+
+    async function onScheduleChange() {
+      const sched = getSelectedSchedule();
+      if (!sched) return;
+      document.getElementById("excel-link").href = `/api/presensi/kelas/${sched.kelas_id}/export.xlsx`;
+      await loadKelasReport(sched.kelas_id);
+    }
+
+    async function generateQr() {
+      const sched = getSelectedSchedule();
+      if (!sched) return;
+      const body = {
+        valid_minutes: Number(document.getElementById("qr-minutes").value || 15),
+      };
+      const lat = document.getElementById("qr-lat").value;
+      const lon = document.getElementById("qr-lon").value;
+      const rad = document.getElementById("qr-rad").value;
+      if (lat && lon) {
+        body.latitude = Number(lat);
+        body.longitude = Number(lon);
+        if (rad) body.max_radius_meters = Number(rad);
+      }
+
+      const res = await fetch(`/api/presensi/qr/${sched.id}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Dosen-Id": String(sched.dosen_id),
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showBanner(data.detail || "Gagal membuat QR presensi", false);
+        return;
+      }
+      document.getElementById("qr-result").style.display = "flex";
+      document.getElementById("qr-img").src = data.qr_base64;
+      document.getElementById("qr-meta").textContent = `${data.kode_mk}-${data.nama_kelas} | Pertemuan #${data.pertemuan_ke} (${data.tanggal})`;
+      document.getElementById("qr-token-box").value = data.token;
+      document.getElementById("scan-token").value = data.token;
+      startCountdown(data.expires_at);
+      showBanner(`QR sesi #${data.pertemuan_ke} untuk ${data.kode_mk}-${data.nama_kelas} berhasil dibuat.`);
+      await refreshReports();
+    }
+
+    function startCountdown(expiresIso) {
+      if (countdownTimer) clearInterval(countdownTimer);
+      const target = new Date(expiresIso).getTime();
+      const tick = () => {
+        const diff = Math.max(0, Math.floor((target - Date.now()) / 1000));
+        const m = Math.floor(diff / 60);
+        const s = diff % 60;
+        document.getElementById("qr-countdown").textContent = diff > 0
+          ? `Kedaluwarsa dalam ${m}m ${String(s).padStart(2, "0")}s`
+          : "Token QR telah kedaluwarsa";
+      };
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    async function scanQr() {
+      const payload = {
+        token: document.getElementById("scan-token").value.trim(),
+        nim: document.getElementById("scan-nim").value.trim(),
+      };
+      const lat = document.getElementById("scan-lat").value;
+      const lon = document.getElementById("scan-lon").value;
+      if (lat && lon) {
+        payload.latitude = Number(lat);
+        payload.longitude = Number(lon);
+      }
+      const res = await fetch("/attendance/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showBanner(data.detail || "Scan presensi ditolak", false);
+        return;
+      }
+      showBanner(`${data.message} (Status: ${data.status})`);
+      await refreshReports();
+    }
+
+    async function loadKelasReport(kelasId) {
+      const res = await fetch(`/api/presensi/kelas/${kelasId}/report`);
+      if (!res.ok) return;
+      const r = await res.json();
+      document.getElementById("kelas-summary").textContent =
+        `${r.kode_mk}-${r.nama_kelas} (${r.nama_mk}) | Total Sesi: ${r.total_sesi} | Warning <75%: ${r.mahasiswa_berisiko.length} mahasiswa`;
+      const rows = (r.peserta || []).map(p => `
+        <tr>
+          <td><code>${esc(p.nim)}</code></td>
+          <td>${esc(p.nama_lengkap)}</td>
+          <td class="num">${p.hadir}</td>
+          <td class="num">${p.terlambat}</td>
+          <td class="num">${p.alpha}</td>
+          <td class="num"><strong>${esc(p.persentase)}%</strong></td>
+          <td>${p.warning
+            ? '<span class="badge badge-warn">Warning &lt;75%</span>'
+            : '<span class="badge badge-ok">Memenuhi</span>'}</td>
+        </tr>
+      `).join("");
+      document.getElementById("kelas-tbody").innerHTML = rows || '<tr><td colspan="7" class="muted">Belum ada peserta terdaftar di kelas ini.</td></tr>';
+    }
+
+    async function loadMahasiswaReport() {
+      const nim = document.getElementById("scan-nim").value.trim();
+      if (!nim) return;
+      const res = await fetch(`/api/presensi/mahasiswa/${encodeURIComponent(nim)}/report`);
+      const box = document.getElementById("mhs-report-box");
+      if (!res.ok) {
+        const err = await res.json();
+        box.innerHTML = `<p class="muted">${esc(err.detail || "NIM tidak ditemukan")}</p>`;
+        return;
+      }
+      const data = await res.json();
+      const rows = (data.mata_kuliah || []).map(mk => `
+        <tr>
+          <td>${esc(mk.kode_mk)}-${esc(mk.nama_kelas)}</td>
+          <td class="num">${mk.hadir + mk.terlambat}/${mk.total_sesi}</td>
+          <td class="num"><strong>${esc(mk.persentase)}%</strong></td>
+          <td>${mk.warning ? '<span class="badge badge-warn">Warning</span>' : '<span class="badge badge-ok">Aman</span>'}</td>
+        </tr>
+      `).join("");
+      box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Kelas</th><th class="num">Hadir</th><th class="num">%</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Belum ada kelas.</td></tr>'}</tbody></table></div>`;
+    }
+
+    async function loadAiInsights() {
+      const res = await fetch("/api/presensi/ai-insights");
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById("ai-narrative").textContent = data.narasi_ai;
+      document.getElementById("ai-insights").innerHTML = (data.insights || []).map(i => `<li>${esc(i)}</li>`).join("");
+      document.getElementById("ai-actions").innerHTML = (data.actions || []).map(a => `<li>${esc(a)}</li>`).join("");
+    }
+
+    async function refreshReports() {
+      const sched = getSelectedSchedule();
+      await Promise.all([
+        sched ? loadKelasReport(sched.kelas_id) : Promise.resolve(),
+        loadAiInsights(),
+        loadMahasiswaReport(),
+      ]);
+    }
+
+    loadSchedules().then(refreshReports);
+  </script>
+</body>
+</html>

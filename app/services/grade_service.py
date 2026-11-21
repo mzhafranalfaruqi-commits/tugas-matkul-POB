@@ -63,8 +63,10 @@ class DemoPresensiStub:
 
 
 def get_presensi_port(db: Session = Depends(get_db)) -> PresensiPort:
-    """Dependency FastAPI penyedia PresensiPort (mudah di-override di pytest atau Minggu 12)."""
-    return DemoPresensiStub(db)
+    """Dependency FastAPI penyedia PresensiPort nyata berbasis DBPresensiAdapter (Minggu 12)."""
+    from app.services.presensi_service import DBPresensiAdapter
+
+    return DBPresensiAdapter(db)
 
 
 def is_pengampu(db: Session, dosen_id: int, kelas_id: int) -> bool:

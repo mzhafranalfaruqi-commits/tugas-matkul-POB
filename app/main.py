@@ -1,4 +1,4 @@
-"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB, KRS, Jadwal, Nilai, Transkrip, & Keuangan."""
+"""Entrypoint aplikasi FastAPI untuk SEVIMA-Mini Modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,7 +14,14 @@ from app.routers.keuangan import router as keuangan_router
 from app.routers.krs import router as krs_router
 from app.routers.nilai import kelas_router, nilai_mahasiswa_router
 from app.routers.pmb import router as pmb_router
-from app.services.exceptions import BillingError, GradeError, KRSError, ScheduleError
+from app.routers.presensi import attendance_alias_router, presensi_router
+from app.services.exceptions import (
+    AttendanceError,
+    BillingError,
+    GradeError,
+    KRSError,
+    ScheduleError,
+)
 from app.services.scheduler import get_billing_scheduler
 
 
@@ -31,23 +38,30 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="SEVIMA-Mini — Modul PMB, KRS, Jadwal, Nilai, Transkrip, & Keuangan API",
+    title="SEVIMA-Mini — Modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi API",
     description=(
         "REST API Penerimaan Mahasiswa Baru, Pengisian & State Machine KRS, "
         "Penjadwalan & Ruangan, Observer/Outbox, AI Rescheduling, Conflict Resolver UI, "
         "Ekspor iCalendar (.ics), Input Nilai Berpenjaga, Kalkulator IPS/IPK, Audit Trail, "
-        "Generator Transkrip Akademik PDF, serta Modul Keuangan (SPP), Webhook Payment Gateway, "
-        "APScheduler Cron, Blokir KRS, & AI Financial Insights"
+        "Generator Transkrip Akademik PDF, Modul Keuangan (SPP), serta Modul Presensi (QR Code, "
+        "JWT 15 Menit, Geofence, Excel Export, & AI Attendance Insights)"
     ),
-    version="1.7.0",
+    version="1.8.0",
     lifespan=lifespan,
 )
 
 
 @app.exception_handler(RequestValidationError)
 async def validasi_input(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Mengembalikan 422 pada rute /api/jadwal, /api/kelas, /api/mahasiswa, /api/keuangan dan 400 untuk PMB/KRS."""
-    rute_422 = ("/api/jadwal", "/api/kelas", "/api/mahasiswa", "/api/keuangan")
+    """Mengembalikan 422 pada rute jadwal/kelas/mahasiswa/keuangan/presensi dan 400 untuk PMB/KRS."""
+    rute_422 = (
+        "/api/jadwal",
+        "/api/kelas",
+        "/api/mahasiswa",
+        "/api/keuangan",
+        "/api/presensi",
+        "/attendance",
+    )
     status_code = 422 if request.url.path.startswith(rute_422) else 400
     return JSONResponse(
         status_code=status_code,
@@ -91,6 +105,17 @@ async def billing_error_handler(_request: Request, exc: BillingError) -> JSONRes
     )
 
 
+@app.exception_handler(AttendanceError)
+async def attendance_error_handler(
+    _request: Request, exc: AttendanceError
+) -> JSONResponse:
+    """Handler polimorfik tunggal yang memetakan setiap subkelas AttendanceError ke status HTTP-nya."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc)},
+    )
+
+
 app.include_router(pmb_router)
 app.include_router(krs_router)
 app.include_router(jadwal_router)
@@ -98,12 +123,14 @@ app.include_router(mahasiswa_router)
 app.include_router(kelas_router)
 app.include_router(nilai_mahasiswa_router)
 app.include_router(keuangan_router)
+app.include_router(presensi_router)
+app.include_router(attendance_alias_router)
 
 
 @app.get("/", tags=["Health"])
 def root() -> dict[str, str]:
     """Endpoint informasi dasar untuk memastikan layanan API berjalan."""
     return {
-        "message": "SEVIMA-Mini Modul PMB, KRS, Jadwal, Nilai, Transkrip, & Keuangan API aktif",
+        "message": "SEVIMA-Mini Modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi API aktif",
         "docs": "/docs",
     }

@@ -1,4 +1,4 @@
-# SEVIMA-Mini — Implementasi Modul PMB, KRS, Jadwal, Nilai, Transkrip, & Keuangan (SPP)
+# SEVIMA-Mini — Implementasi Modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi
 
 Proyek ini merupakan implementasi sistem akademik **SEVIMA-Mini** untuk mata kuliah **Pemrograman Berorientasi Objek untuk Sistem AI Agenik**, yang mencakup:
 1. **Modul PMB (Minggu 3–4):** Pendaftaran calon mahasiswa, persetujuan admin, generator NIM atomik bebas *race condition*, dan statistik pendaftar.
@@ -9,6 +9,7 @@ Proyek ini merupakan implementasi sistem akademik **SEVIMA-Mini** untuk mata kul
 6. **Modul Nilai & Transkrip Bagian 1 (Minggu 9):** `skala_nilai.bobot Numeric(3,2)` + kolom data `lulus` + `grade_history` + SQL view `v_riwayat_nilai` (`0007`), **domain murni perhitungan IPS/IPK** berbasis `Decimal` & `ROUND_HALF_UP` ([app/domain/gpa.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/gpa.py)), `NilaiRepo` + `GPACalculator` (*compute-on-read* & pembanding CTE SQL `ROW_NUMBER()`), `GradeService` berpenjaga ganda (`is_pengampu` `403` + `PresensiPort` `>= 75%` `400`, idempotency, wajib alasan saat edit, transaksi atomik `grade_history`), UI Form Input Nilai (`/api/kelas/nilai-form`), serta **ADR-016..017**.
 7. **Modul Nilai & Transkrip Bagian 2 (Minggu 10):** `get_transcript(nim)` compute-on-read + **predikat kelulusan** (*Cum Laude* `>= 3.50`, *Sangat Memuaskan* `>= 3.00`, dst.), template HTML/CSS resmi bergaya ijazah ([app/templates/transkrip.html](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/templates/transkrip.html)), port `TranscriptPdfRenderer` & **`ReportLabTranscriptRenderer`** ([app/services/transcript_pdf.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/transcript_pdf.py)), endpoint JSON/HTML/PDF (`/api/mahasiswa/{nim}/transkrip*`), demo 3 semester Dina (`2025001-0004`, IPK `"3.82"`), serta **ADR-018..019**.
 8. **Modul Keuangan (SPP) (Minggu 11):** Skema `payment_method`, `billing` (`unpaid`/`partial`/`paid`/`overdue`), & `payment` (`0008`), domain murni `Decimal` ([app/domain/keuangan.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/keuangan.py)) untuk tarif per prodi (`Teknik 5jt`, `Ekonomi 4jt`, lainnya `4.5jt`), due date +14 hari, & denda keterlambatan (`0.5%/hari`, cap `10%`), `BillingService` (cicilan `partial -> paid` atomik, keamanan webhook HMAC-SHA256 + idempotency `transaction_id`, & email receipt pasca-commit via `EmailReceiptPort`), **APScheduler** cron jobs (`BillingScheduler`), integrasi **blokir KRS `403`** (`BillingArrearsValidator` + `KRSManager`), **Dashboard Keuangan Real-Time** (`/api/keuangan/dashboard` + grafik SVG bulanan & collection rate prodi), **AI Financial Insights** JSON (`/api/keuangan/ai-report*`), serta **ADR-020..022**.
+9. **Modul Presensi (QR Code) (Minggu 12):** Skema `attendance_session` & `attendance_record` (`0009`), domain murni ([app/domain/presensi.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/presensi.py)) untuk window kehadiran (`15 mnt` hadir / `30 mnt` terlambat), Haversine geofencing, & AI Pattern Analyzer, `PresensiService` (`qrcode` PNG + `PyJWT` HS256 15 menit dengan rotasi `jti` anti-replay, validasi hari/enrollment/geofence/duplikat/rate limit `429`, & ekspor Excel `.xlsx` 2 sheet `openpyxl`), integrasi nyata **`DBPresensiAdapter`** ke `PresensiPort` Minggu 9, endpoint `/attendance/*` & `/api/presensi/*`, dashboard HTML `/api/presensi/dashboard`, serta **ADR-023..025**.
 
 ---
 
@@ -24,10 +25,11 @@ Proyek ini merupakan implementasi sistem akademik **SEVIMA-Mini** untuk mata kul
 | Domain Nilai, `GPACalculator`, `GradeService`, & Audit Trail (`GradeHistory`) | Fungsi murni `Decimal` IPS/IPK/predikat, `PresensiPort` (DIP), `is_pengampu`, view `v_riwayat_nilai`, & form HTML | [app/domain/gpa.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/gpa.py), [app/services/gpa_calculator.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/gpa_calculator.py), [app/services/grade_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/grade_service.py), [app/models/nilai.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/models/nilai.py), [app/templates/nilai_form.html](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/templates/nilai_form.html) |
 | Transkrip Akademik & Dual Renderer (HTML Jinja2 + ReportLab PDF) | `get_transcript(nim)`, preview HTML A4 resmi, dan generator PDF `ReportLabTranscriptRenderer` + logo & TTD Dekan | [app/services/transcript_pdf.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/transcript_pdf.py), [app/templates/transkrip.html](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/templates/transkrip.html) |
 | Modul Keuangan (SPP), Webhook HMAC, APScheduler, Blokir KRS, & AI Report | `Billing`, `Payment`, `PaymentMethod` (`0008`), domain murni `Decimal`, `BillingService`, `BillingScheduler`, `BillingArrearsValidator` (`403`), `FinancialReportService`, & dashboard HTML | [app/domain/keuangan.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/keuangan.py), [app/models/keuangan.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/models/keuangan.py), [app/services/billing_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/billing_service.py), [app/services/scheduler.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/scheduler.py), [app/services/financial_ai.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/financial_ai.py), [app/templates/keuangan_dashboard.html](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/templates/keuangan_dashboard.html) |
+| Modul Presensi (QR Code), JWT 15m, Geofence, Excel, & AI Insights | `AttendanceSession`, `AttendanceRecord` (`0009`), domain murni `presensi.py`, `PresensiService`, `DBPresensiAdapter`, `AttendanceAIService`, & dashboard HTML | [app/domain/presensi.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/domain/presensi.py), [app/models/presensi.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/models/presensi.py), [app/services/presensi_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/presensi_service.py), [app/services/attendance_ai.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/attendance_ai.py), [app/templates/presensi_dashboard.html](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/templates/presensi_dashboard.html) |
 | Chain of Responsibility & Template Method | `Validator(ABC)` (`BillingArrears → Duplicate → SKS → Prerequisite → Conflict`) | [app/validators/base.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/validators/base.py), [app/validators/krs.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/validators/krs.py) |
-| Service Layer (`PMBService`, `KRSManager`, `KRSRecommender`, `SchedulingService`, `GradeService`, `BillingService`) | Pengendali alur, state machine atomik, locking, sweep, CSP, nilai, & billing SPP | [app/services/pmb_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/pmb_service.py), [app/services/krs_manager.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/krs_manager.py), [app/services/krs_recommender.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/krs_recommender.py), [app/services/scheduling_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/scheduling_service.py), [app/services/conflict.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/conflict.py), [app/services/billing_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/billing_service.py) |
-| Router REST API (`/api/pmb/*`, `/api/krs/*`, `/api/jadwal/*`, `/api/kelas/*`, `/api/mahasiswa/*`, `/api/keuangan/*`) | Router tipis + guard, OpenAPI `responses={...}`, `.ics`, nilai/IPK, transkrip PDF, & keuangan SPP | [app/routers/pmb.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/pmb.py), [app/routers/krs.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/krs.py), [app/routers/jadwal.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/jadwal.py), [app/routers/nilai.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/nilai.py), [app/routers/keuangan.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/keuangan.py) |
-| Architecture Decision Record (ADR) | Keputusan arsitektural ADR-001 s.d. ADR-022 | [docs/ADR.md](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/docs/ADR.md) |
+| Service Layer (`PMBService`, `KRSManager`, `KRSRecommender`, `SchedulingService`, `GradeService`, `BillingService`, `PresensiService`) | Pengendali alur, state machine atomik, locking, sweep, CSP, nilai, billing SPP, & presensi QR | [app/services/pmb_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/pmb_service.py), [app/services/krs_manager.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/krs_manager.py), [app/services/krs_recommender.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/krs_recommender.py), [app/services/scheduling_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/scheduling_service.py), [app/services/conflict.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/conflict.py), [app/services/billing_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/billing_service.py), [app/services/presensi_service.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/services/presensi_service.py) |
+| Router REST API (`/api/pmb/*`, `/api/krs/*`, `/api/jadwal/*`, `/api/kelas/*`, `/api/mahasiswa/*`, `/api/keuangan/*`, `/api/presensi/*`, `/attendance/*`) | Router tipis + guard, OpenAPI `responses={...}`, `.ics`, nilai/IPK, transkrip PDF, keuangan SPP, & presensi QR | [app/routers/pmb.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/pmb.py), [app/routers/krs.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/krs.py), [app/routers/jadwal.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/jadwal.py), [app/routers/nilai.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/nilai.py), [app/routers/keuangan.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/keuangan.py), [app/routers/presensi.py](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/app/routers/presensi.py) |
+| Architecture Decision Record (ADR) | Keputusan arsitektural ADR-001 s.d. ADR-025 | [docs/ADR.md](file:///c:/Users/Lenovo/OneDrive/Dokumen/tugas%20matkul%20POB/sevima-mini/docs/ADR.md) |
 
 ---
 
@@ -38,31 +40,34 @@ sevima-mini/
 ├── .github/
 │   └── pull_request_template.md     # Template PR sesuai rubrik kuliah
 ├── app/
-│   ├── main.py                      # Entrypoint FastAPI (PMB, KRS, Jadwal, Nilai, Transkrip, & Keuangan + scheduler lifespan)
+│   ├── main.py                      # Entrypoint FastAPI (PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi)
 │   ├── database.py                  # Engine SQLAlchemy, PRAGMA foreign_keys=ON & busy_timeout
 │   ├── domain/
 │   │   ├── __init__.py
 │   │   ├── gpa.py                   # Fungsi murni hitung_ips, hitung_ipk, tentukan_predikat, & bangun_ringkasan_transkrip (Decimal)
-│   │   └── keuangan.py              # Fungsi murni tarif prodi, due_date, denda keterlambatan, & analisis_keuangan_csv (Decimal)
+│   │   ├── keuangan.py              # Fungsi murni tarif prodi, due_date, denda keterlambatan, & analisis_keuangan_csv (Decimal)
+│   │   └── presensi.py              # Fungsi murni window hadir/terlambat, Haversine geofence, & analisis_pola_presensi
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── pmb.py                   # ProgramStudi, JalurMasuk, CalonMahasiswa, NimCounter
 │   │   ├── krs.py                   # SkalaNilai (Numeric + lulus), MataKuliah, prerequisite, KRS (48-comb), KRSDetail, KRSLog, Notifikasi
 │   │   ├── jadwal.py                # Ruangan, Dosen, Kelas, Jadwal (+ sequence), Outbox
 │   │   ├── nilai.py                 # GradeHistory (append-only) + definisi view v_riwayat_nilai
-│   │   └── keuangan.py              # PaymentMethod, Billing (unpaid/partial/paid/overdue), & Payment
+│   │   ├── keuangan.py              # PaymentMethod, Billing (unpaid/partial/paid/overdue), & Payment
+│   │   └── presensi.py              # AttendanceSession (active_jti, geofence) & AttendanceRecord
 │   ├── schemas/
 │   │   ├── pmb.py                   # Skema Pydantic v2 PMB
 │   │   ├── krs.py                   # Skema Pydantic v2 KRS (+ approve, revise, recommend)
 │   │   ├── jadwal.py                # JadwalIn, JadwalOut, JadwalDetailOut, ConflictOut, SaranOut, ApplySaranIn
 │   │   ├── nilai.py                 # NilaiIn, NilaiOut, IPKOut, IPSOut, GradeHistoryOut, PesertaNilaiOut, TranskripOut
-│   │   └── keuangan.py              # BillingOut, PaymentOut, WebhookPaymentIn/Out, DashboardKeuanganOut, AIReportOut, SchedulerStatusOut
+│   │   ├── keuangan.py              # BillingOut, PaymentOut, WebhookPaymentIn/Out, DashboardKeuanganOut, AIReportOut, SchedulerStatusOut
+│   │   └── presensi.py              # QRGenerateOut, ScanRequest/Out, Mahasiswa/KelasPresensiReportOut, AIAttendanceInsightsOut
 │   ├── validators/
 │   │   ├── __init__.py
 │   │   ├── base.py                  # ValidationResult, KRSContext, Validator(ABC), build_chain
 │   │   └── krs.py                   # BillingArrearsValidator, DuplicateValidator, SKSValidator, PrerequisiteValidator, ConflictValidator
 │   ├── services/
-│   │   ├── exceptions.py            # Domain exception PMB, KRSError (403/409), ScheduleError, GradeError, & BillingError (400/401/404/409)
+│   │   ├── exceptions.py            # Domain exception PMB, KRSError, ScheduleError, GradeError, BillingError, & AttendanceError
 │   │   ├── nim_generator.py         # format_nim() + generate_nim() via nim_counter & flush()
 │   │   ├── pmb_service.py           # Kelas OOP PMBService
 │   │   ├── krs_queries.py           # Query kompleks prasyarat NOT EXISTS + bobot skala_nilai
@@ -75,22 +80,26 @@ sevima-mini/
 │   │   ├── icalendar.py             # Formatter RFC 5545 ke_vevent & export_jadwal_ics (CRLF, Asia/Jakarta, UTC UNTIL)
 │   │   ├── scheduling_service.py    # SchedulingService (CRUD, cek_kapasitas, lock Ruangan -> Dosen, KRS invalidation, Outbox)
 │   │   ├── gpa_calculator.py        # NilaiRepo (+ CTE SQL ROW_NUMBER()) & GPACalculator compute-on-read (+ get_transcript)
-│   │   ├── grade_service.py         # GradeService (is_pengampu, PresensiPort/Stub, input_nilai atomik, v_riwayat_nilai)
+│   │   ├── grade_service.py         # GradeService (is_pengampu, PresensiPort -> DBPresensiAdapter, input_nilai atomik, v_riwayat_nilai)
 │   │   ├── transcript_pdf.py        # Dual renderer Transkrip: render_transcript_html (Jinja2) & ReportLabTranscriptRenderer (PDF)
 │   │   ├── billing_service.py       # BillingService (tagihan, bayar atomik, HMAC webhook, denda, reminder, dashboard, receipt email)
 │   │   ├── financial_ai.py          # FinancialReportService (analisis CSV/DB -> AI Financial Insights JSON)
-│   │   └── scheduler.py             # BillingScheduler (APScheduler cron awal semester & reminder harian)
+│   │   ├── scheduler.py             # BillingScheduler (APScheduler cron awal semester & reminder harian)
+│   │   ├── presensi_service.py      # PresensiService (QR PNG + JWT HS256, rotasi jti, geofence, rate limit, Excel, DBPresensiAdapter)
+│   │   └── attendance_ai.py         # AttendanceAIService (analisis pola absen & early warning <75% -> JSON)
 │   ├── templates/
 │   │   ├── resolver.html            # Dashboard UI HTML Conflict Resolver & AI Rescheduling
 │   │   ├── nilai_form.html          # Form UI HTML Input Nilai Dosen & Audit Trail (+ link Transkrip/PDF)
 │   │   ├── transkrip.html           # Template Jinja2 HTML/CSS resmi Transkrip Akademik (A4 siap cetak)
-│   │   └── keuangan_dashboard.html  # Dashboard UI HTML Keuangan (SPP), grafik SVG, simulator webhook, & AI Insights
+│   │   ├── keuangan_dashboard.html  # Dashboard UI HTML Keuangan (SPP), grafik SVG, simulator webhook, & AI Insights
+│   │   └── presensi_dashboard.html  # Dashboard UI HTML Presensi QR Code, simulasi scan, laporan kelas, & AI Insights
 │   └── routers/
 │       ├── pmb.py                   # Endpoint /api/pmb/*
 │       ├── krs.py                   # Endpoint /api/krs/*
 │       ├── jadwal.py                # Endpoint /api/jadwal/* + /api/mahasiswa/{nim}/jadwal.ics
 │       ├── nilai.py                 # Endpoint /api/kelas/* + /api/mahasiswa/{nim}/(ipk|ips|nilai/riwayat|transkrip*)
-│       └── keuangan.py              # Endpoint /api/keuangan/* (dashboard, billing, payments, webhook, ai-report, scheduler, receipts)
+│       ├── keuangan.py              # Endpoint /api/keuangan/* (dashboard, billing, payments, webhook, ai-report, scheduler, receipts)
+│       └── presensi.py              # Endpoint /api/presensi/* & /attendance/(qr|scan)
 ├── alembic/
 │   ├── env.py
 │   └── versions/
@@ -101,7 +110,8 @@ sevima-mini/
 │       ├── 0005_tabel_jadwal_ruangan.py # Tabel ruangan, dosen, kelas, jadwal + krs_detail.kelas_id
 │       ├── 0006_outbox_dan_jadwal_sequence.py # Kolom jadwal.sequence + tabel Transactional Outbox
 │       ├── 0007_nilai_grade_history_view.py   # skala_nilai (Numeric+lulus), grade_history, & view v_riwayat_nilai
-│       └── 0008_modul_keuangan_spp.py         # payment_method, billing, & payment untuk Modul Keuangan (SPP)
+│       ├── 0008_modul_keuangan_spp.py         # payment_method, billing, & payment untuk Modul Keuangan (SPP)
+│       └── 0009_modul_presensi_qr.py          # attendance_session & attendance_record untuk Modul Presensi QR
 ├── tests/
 │   ├── conftest.py
 │   ├── test_pmb.py                  # Tests Modul PMB (30 skenario)
@@ -114,11 +124,13 @@ sevima-mini/
 │   ├── test_grade_service.py        # Tests Modul Nilai (401/403/404, batas presensi 75%, idempotency, alasan, rollback, CTE SQL, UI)
 │   ├── test_transcript.py           # Tests Modul Transkrip Bag. 2 (JSON/HTML/PDF, XSS escaping, pypdf parsing, acceptance 4 semester)
 │   ├── test_keuangan.py             # Tests Modul Keuangan SPP (constraints, tarif, denda, webhook HMAC, blokir KRS, dashboard, AI, cron)
-│   └── test_keuangan_property.py    # Hypothesis (500x) denda bounded/monotonik, cicilan partial/paid, & persentase collection rate
+│   ├── test_keuangan_property.py    # Hypothesis (500x) denda bounded/monotonik, cicilan partial/paid, & persentase collection rate
+│   ├── test_presensi.py             # Tests Modul Presensi QR (JWT 15m, rotasi jti, scan validation, geofence, rate limit, Excel, AI)
+│   └── test_presensi_property.py    # Hypothesis (500x) persentase bounded/monotonik, Haversine simetri, & window 15/30 mnt
 ├── prompts/
-│   └── ai-usage-log.md              # Log AI terstruktur + OPAR (Minggu 3–11)
+│   └── ai-usage-log.md              # Log AI terstruktur + OPAR (Minggu 3–12)
 ├── docs/
-│   ├── ADR.md                       # ADR-001 s.d. ADR-022
+│   ├── ADR.md                       # ADR-001 s.d. ADR-025
 │   ├── AI_USAGE_LOG.md
 │   ├── EXPLAIN_PRASYARAT.md         # Bukti verbatim EXPLAIN QUERY PLAN sebelum vs sesudah index
 │   ├── SEQUENCE_OBSERVER.md         # Diagram sekuens Mermaid COMMIT sebelum notify + Observer vs Pub-Sub
@@ -128,8 +140,9 @@ sevima-mini/
 │   ├── PR_MINGGU_8.md               # PR Minggu 8 (Observer, Outbox, KRSInvalidator, AI Rescheduler, UI, .ics)
 │   ├── PR_MINGGU_9.md               # PR Minggu 9 (Domain Decimal GPA, GradeService, PresensiPort, Audit Trail, Form UI)
 │   ├── PR_MINGGU_10.md              # PR Minggu 10 (get_transcript, Predikat, HTML Preview, & PDF Generator ReportLab)
-│   └── PR_MINGGU_11.md              # PR Minggu 11 (Billing SPP, Webhook HMAC, APScheduler, Blokir KRS, Dashboard, & AI Report)
-├── seed.py                          # Seeding idempotent PMB, KRS, Jadwal, Nilai, Transkrip 3-Sem (Dina), & Keuangan SPP 20261
+│   ├── PR_MINGGU_11.md              # PR Minggu 11 (Billing SPP, Webhook HMAC, APScheduler, Blokir KRS, Dashboard, & AI Report)
+│   └── PR_MINGGU_12.md              # PR Minggu 12 (QR Code JWT, Geofence, Rate Limit, DBPresensiAdapter, Excel, & AI Insights)
+├── seed.py                          # Seeding idempotent PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi
 ├── alembic.ini
 ├── requirements.txt
 └── README.md
@@ -169,6 +182,10 @@ sevima-mini/
 19. `payment_method`: `id` (PK), `code` (`String(30)`, `UNIQUE` terindeks), `name`, `provider`, `is_active` (default `True`), `created_at`.
 20. `billing`: `id` (PK), `nim` (FK -> `calon_mahasiswa.nim`, terindeks), `semester` (`String(5)`, terindeks), `amount` (`Numeric(14, 2)` > 0), `denda` (`Numeric(14, 2)` >= 0), `paid_amount` (`Numeric(14, 2)` >= 0), `due_date` (`Date`, terindeks), `status` (`unpaid`/`partial`/`paid`/`overdue` + CHECK enum, terindeks), `reminder_count`, `last_reminder_at`, `UNIQUE (nim, semester)`.
 21. `payment`: `id` (PK), `billing_id` (FK -> `billing.id` `ON DELETE CASCADE`, terindeks), `payment_method_id` (FK -> `payment_method.id`, terindeks), `transaction_id` (`String(100)`, `UNIQUE` terindeks), `amount` (`Numeric(14, 2)` > 0), `status` (`success`/`pending`/`failed` + CHECK enum), `source` (`manual`/`webhook`), `paid_at` (terindeks), `notes`, `receipt_sent`, `created_at`.
+
+### Modul Presensi (QR Code) (`0009`)
+22. `attendance_session`: `id` (PK), `jadwal_id` (FK -> `jadwal.id` `ON DELETE CASCADE`, terindeks), `pertemuan_ke` (`CHECK >= 1`), `tanggal` (`Date`, terindeks), `dosen_id` (FK -> `dosen.id`, terindeks), `active_jti` (`String(64)`, `UNIQUE` terindeks), `generated_at`, `expires_at`, `valid_minutes` (`CHECK 1..30`), `is_active`, `latitude`/`longitude`/`max_radius_meters` (`CHECK >= 10` opsional), `UNIQUE (jadwal_id, tanggal)`.
+23. `attendance_record`: `id` (PK), `session_id` (FK -> `attendance_session.id` `ON DELETE CASCADE`, terindeks), `nim` (FK -> `calon_mahasiswa.nim`, terindeks), `status` (`hadir`/`terlambat`/`izin`/`alpha` + CHECK enum, terindeks), `scanned_at` (terindeks), `latitude`, `longitude`, `distance_meters`, `token_jti`, `notes`, `UNIQUE (session_id, nim)`.
 
 ---
 
@@ -242,6 +259,20 @@ sevima-mini/
 | `GET` | `/api/keuangan/scheduler/jobs` | Status APScheduler dan daftar cron job terdaftar | `200` |
 | `GET` | `/api/keuangan/receipts` | Log email kuitansi pembayaran dan pengingat yang dikirim sistem | `200` |
 
+### Modul Presensi (QR Code) (`/api/presensi` & `/attendance`)
+| Method | Endpoint | Fungsi | Status Code |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/presensi/dashboard` | Halaman UI HTML Presensi QR Code, simulasi scan, laporan kelas, & AI Insights | `200` |
+| `GET` | `/api/presensi/schedules` | Daftar seluruh jadwal kuliah untuk pemilih sesi pembuatan QR | `200` |
+| `GET` | `/attendance/qr/{schedule_id}` (`& /api/presensi/qr/{schedule_id}`) | Generate gambar PNG QR code ber-JWT 15 menit (rotasi `active_jti` anti-replay) | `200`, `400`, `403`, `404` |
+| `POST` | `/api/presensi/qr/{schedule_id}` | Generate QR sesi dalam JSON (`token` + `qr_base64` data URI PNG) | `200`, `400`, `403`, `404` |
+| `POST` | `/attendance/scan` (`& /api/presensi/scan`) | Validasi scan QR (JWT `exp`/`jti`, hari, enrollment, geofence, duplikat, rate limit) | `200`, `400`, `401`, `403`, `404`, `409`, `429` |
+| `GET` | `/api/presensi/mahasiswa/{nim}/report` | Persentase kehadiran mahasiswa per mata kuliah + flag warning `<75%` | `200`, `404` |
+| `GET` | `/api/presensi/kelas/{kelas_id}/report` | Rekap presensi peserta kelas + daftar mahasiswa berisiko `<75%` | `200`, `404` |
+| `GET` | `/api/presensi/kelas/{kelas_id}/export.xlsx` | Unduh laporan presensi 2 sheet Excel `.xlsx` (`openpyxl`) untuk dosen | `200`, `404` |
+| `GET` | `/api/presensi/ai-insights` | Generate AI Attendance Insights & early warning JSON dari database live | `200` |
+| `POST` | `/api/presensi/ai-insights/analyze` | Analisis JSON array `attendance_records` untuk deteksi pola absen & tindakan | `200`, `400`, `422` |
+
 ---
 
 ## Cara Menjalankan Proyek
@@ -253,13 +284,13 @@ cd sevima-mini
 .\.venv\Scripts\alembic.exe upgrade head
 .\.venv\Scripts\python.exe seed.py
 
-# 2. Jalankan seluruh suite pengujian (189 passed, total coverage 95.82%)
+# 2. Jalankan seluruh suite pengujian (197 passed, total coverage 95.77%)
 .\.venv\Scripts\pytest.exe --cov=app --cov-report=term-missing --cov-fail-under=80 -v
 
-# 3. Khusus property-based testing KRS, Jadwal, IPK/Transkrip, & Keuangan
-.\.venv\Scripts\pytest.exe tests/test_krs_property.py tests/test_conflict_property.py tests/test_gpa.py tests/test_transcript.py tests/test_keuangan_property.py tests/test_keuangan.py -v
+# 3. Khusus property-based testing KRS, Jadwal, IPK/Transkrip, Keuangan, & Presensi
+.\.venv\Scripts\pytest.exe tests/test_krs_property.py tests/test_conflict_property.py tests/test_gpa.py tests/test_transcript.py tests/test_keuangan_property.py tests/test_keuangan.py tests/test_presensi_property.py tests/test_presensi.py -v
 
-# 4. Jalankan server lokal untuk Dashboard Keuangan (/api/keuangan/dashboard), Form Nilai UI (/api/kelas/nilai-form), Preview Transkrip (/api/mahasiswa/2025001-0004/transkrip/preview), Resolver UI (/api/jadwal/resolver), & Swagger (/docs)
+# 4. Jalankan server lokal untuk Dashboard Presensi (/api/presensi/dashboard), Dashboard Keuangan (/api/keuangan/dashboard), Form Nilai UI (/api/kelas/nilai-form), Preview Transkrip (/api/mahasiswa/2025001-0004/transkrip/preview), Resolver UI (/api/jadwal/resolver), & Swagger (/docs)
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
@@ -284,3 +315,6 @@ cd sevima-mini
 15. Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2022). *Introduction to Algorithms* (4th ed., Chapter 14: Augmenting Data Structures — Interval Trees & Chapter 33: Computational Geometry — Line-Segment Sweep).
 16. Grönholm, A. *APScheduler Documentation — BackgroundScheduler & CronTrigger*. https://apscheduler.readthedocs.io/
 17. Krawczyk, H., Bellare, M., & Canetti, R. (1997). *RFC 2104: HMAC: Keyed-Hashing for Message Authentication*. IETF. https://datatracker.ietf.org/doc/html/rfc2104
+18. Jones, M., Bradley, J., & Sakimura, N. (2015). *RFC 7519: JSON Web Token (JWT)* & *RFC 7518: JSON Web Algorithms (JWA)*. IETF. https://datatracker.ietf.org/doc/html/rfc7519
+19. PyJWT Contributors. *PyJWT Documentation — Encoding, Decoding, & Claims Validation*. https://pyjwt.readthedocs.io/
+20. OpenPyXL & python-qrcode Contributors. *openpyxl Documentation* (https://openpyxl.readthedocs.io/) & *qrcode Documentation* (https://github.com/lincolnloop/python-qrcode).

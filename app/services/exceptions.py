@@ -173,3 +173,45 @@ class PaymentConflictError(BillingError):
     """Dilempar bila tagihan sudah lunas atau transaction_id bentrok (HTTP 409)."""
 
     status_code = 409
+
+
+class AttendanceError(Exception):
+    """Base domain exception untuk seluruh pelanggaran aturan Modul Presensi (QR Code)."""
+
+    status_code: int = 400
+
+
+class AttendanceValidationError(AttendanceError):
+    """Dilempar bila hari kuliah salah, terlambat >30 menit, atau koordinat wajib tidak ada (HTTP 400)."""
+
+    status_code = 400
+
+
+class AttendanceExpiredError(AttendanceError):
+    """Dilempar bila token QR kedaluwarsa, signature tidak valid, atau token telah dirotasi (HTTP 401)."""
+
+    status_code = 401
+
+
+class AttendanceForbiddenError(AttendanceError):
+    """Dilempar bila mahasiswa bukan peserta kelas, bukan dosen pengampu, atau di luar radius geofence (HTTP 403)."""
+
+    status_code = 403
+
+
+class AttendanceNotFoundError(AttendanceError):
+    """Dilempar bila jadwal, sesi presensi, kelas, atau mahasiswa tidak ditemukan (HTTP 404)."""
+
+    status_code = 404
+
+
+class AttendanceDuplicateError(AttendanceError):
+    """Dilempar bila mahasiswa sudah melakukan scan presensi pada sesi yang sama (HTTP 409)."""
+
+    status_code = 409
+
+
+class AttendanceRateLimitError(AttendanceError):
+    """Dilempar bila batas frekuensi scan QR per menit terlampaui (HTTP 429)."""
+
+    status_code = 429

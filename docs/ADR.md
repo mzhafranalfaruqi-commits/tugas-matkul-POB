@@ -378,3 +378,51 @@ Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplement
 - **Konsekuensi & Pertimbangan:**  
   - Pelunasan melalui webhook maupun manual seketika membuka akses KRS mahasiswa tanpa jeda sinkronisasi.
   - Pada deployment multi-worker (`uvicorn --workers > 1`), scheduler sebaiknya dipindah ke satu proses worker khusus atau memakai *distributed job lock* agar cron job tidak berjalan ganda di tiap worker.
+
+---
+
+## ADR-023: Resolusi Window QR 15 Menit vs Batas Terlambat 30 Menit, JWT HS256 >= 32 Byte, & Rotasi `jti` Anti-Replay
+
+- **Status:** Diterima (Minggu 12)
+- **Konteks:**  
+  Spesifikasi Minggu 12 menetapkan QR code hanya berlaku 15 menit (untuk mencegah penyalahgunaan foto QR di luar kelas), namun juga menetapkan status `"hadir"` bila scan dalam 15 menit pertama dan `"terlambat"` bila scan setelah 15 menit (maksimal 30 menit dari awal kuliah). Selain itu, QR lama harus tidak bisa dipakai ulang apabila dosen memperbarui QR sesi.
+- **Keputusan:**  
+  1. **Pemodelan Sesi + Rotasi Token `jti` Unik (`AttendanceSession`):**  
+     Setiap pertemuan kuliah pada pasangan `(jadwal_id, tanggal)` direpresentasikan oleh satu baris `AttendanceSession` yang menyimpan `active_jti`, `generated_at`, dan `expires_at`. Dosen dapat memanggil `create_or_rotate_qr()` kembali pada sesi yang sama (misalnya di menit ke-15 untuk mahasiswa terlambat hingga menit ke-30) sehingga QR baru memiliki masa hidup 15 menit segar dengan `active_jti` baru, sementara token QR sebelumnya seketika tertolak (`401 AttendanceExpiredError`).
+  2. **Secret HMAC-SHA256 >= 32 Byte (RFC 7518 Section 3.2) & Verifikasi Klaim Deterministik:**  
+     Secret default `DEFAULT_QR_SECRET` memakai kunci 36 byte (menghilangkan `InsecureKeyLengthWarning`), dan `decode_attendance_token()` memverifikasi tanda tangan HS256 lalu memeriksa `iat` serta `exp` secara deterministik terhadap timestamp referensi (mendukung pengujian waktu terkendali tanpa `time.sleep()`).
+- **Konsekuensi & Pertimbangan:**  
+  - Replay attack memakai foto token QR sesi lama atau QR yang sudah diganti tertolak `401`.
+  - Di produksi, `ATTENDANCE_JWT_SECRET` wajib diisi kunci acak minimal 32 byte dari *secret manager*.
+
+---
+
+## ADR-024: Integrasi Nyata `DBPresensiAdapter` ke `PresensiPort` Minggu 9, Geofencing Haversine, & Rate Limiting
+
+- **Status:** Diterima (Minggu 12)
+- **Konteks:**  
+  Pada Minggu 9 (**ADR-017**), `GradeService` memblokir input nilai `< 75%` melalui abstraksi `PresensiPort` yang sementara menggunakan `DemoPresensiStub`. Kini Modul Presensi menyediakan data kehadiran riil di database, sekaligus membutuhkan opsi validasi lokasi (geofencing) dan pencegahan *spam scan* (`rate limiting`).
+- **Keputusan:**  
+  1. **Adaptor Nyata `DBPresensiAdapter` dengan Fallback Kompatibel (`app/services/presensi_service.py`):**  
+     `get_presensi_port(db)` kini mengembalikan `DBPresensiAdapter(db)`. Bila `kelas_id` sudah memiliki baris `AttendanceSession` (`total_sesi > 0`), persentase dihitung langsung dari rekord `hadir`/`terlambat` pada database; apabila `total_sesi == 0` (misalnya pada skenario tes Minggu 9 yang belum menginisialisasi modul presensi), adaptor mendelegasikan secara transparan ke `DemoPresensiStub`.
+  2. **Geofencing Opsional Berbasis Haversine & Sliding-Window Rate Limiter:**  
+     Bila dosen mengisi `latitude`, `longitude`, dan `max_radius_meters` saat generate QR, scan memvalidasi jarak permukaan bumi via `hitung_jarak_haversine_meter()` (`400` jika koordinat mahasiswa kosong, `403` jika di luar radius). Endpoint scan dilindungi `SlidingWindowRateLimiter` (`5` request/menit per kunci host + NIM, mengembalikan `429`).
+- **Konsekuensi & Pertimbangan:**  
+  - Kehadiran di Modul Presensi langsung memengaruhi kelayakan input nilai di Modul Nilai tanpa mengubah satu baris pun kode `GradeService`.
+  - Pada deployment multi-instance di produksi, `SlidingWindowRateLimiter` memori proses perlu diganti ke Redis rate limiter.
+
+---
+
+## ADR-025: Ekspor Excel 2-Sheet (`openpyxl`) & AI Attendance Pattern Analyzer Deterministik
+
+- **Status:** Diterima (Minggu 12)
+- **Konteks:**  
+  Dosen membutuhkan file Excel laporan presensi yang menyoroti mahasiswa berisiko (`< 75%`), dan sistem membutuhkan AI Attendance Insights yang menghasilkan peringatan dini serta pola absen hari/jam (`Senin pagi`, `jam 07:00`) dalam format JSON terstruktur.
+- **Keputusan:**  
+  1. **Workbook Excel Multi-Sheet (`openpyxl`):**  
+     `GET /api/presensi/kelas/{kelas_id}/export.xlsx` menghasilkan workbook 2 sheet: `Rekap Presensi` (ringkasan total sesi, hadir, terlambat, izin, alpha, persentase, dan penanda merah `WARNING (<75%)`) serta `Log Kehadiran` (riwayat timestamp scan dan jarak GPS per pertemuan).
+  2. **Analisis Pola & Rekomendasi Deterministik (`app/domain/presensi.py` + `app/services/attendance_ai.py`):**  
+     Perhitungan persentase per mahasiswa, deteksi *early warning* `< 75%`, identifikasi pola ketidakhadiran berulang pada hari & slot waktu tertentu, serta perhitungan *absen rate* kelas/jam dijalankan oleh fungsi murni deterministik `analisis_pola_presensi()` sebelum dirangkum oleh `DeterministicAttendanceNarrativeClient`, menjaga keakuratan angka 100%.
+- **Konsekuensi & Pertimbangan:**  
+  - Ekspor `.xlsx` langsung kompatibel dengan Microsoft Excel dan LibreOffice Calc serta dapat diverifikasi otomatis di `pytest` menggunakan `openpyxl.load_workbook`.
+  - Port `AttendanceNarrativeClient` memungkinkan penyambungan LLM eksternal kelak tanpa mengorbankan kebenaran statistik kehadiran.

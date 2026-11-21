@@ -1,6 +1,6 @@
-"""Script seeding data referensi PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan (SPP) secara idempotent."""
+"""Script seeding data referensi PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, dan Presensi secara idempotent."""
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,6 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import (
+    AttendanceRecord,
+    AttendanceSession,
+    AttendanceStatus,
     Billing,
     BillingStatus,
     CalonMahasiswa,
@@ -923,8 +926,152 @@ def seed_keuangan_data(db: Session) -> None:
     db.commit()
 
 
+def seed_presensi_data(db: Session) -> None:
+    """Mengisi data sesi QR presensi dan catatan kehadiran mahasiswa secara idempoten."""
+    k_if102_a = db.execute(
+        select(Kelas).where(
+            Kelas.kode_mk == "IF102", Kelas.nama == "A", Kelas.semester == "20251"
+        )
+    ).scalar_one()
+    k_if201_b = db.execute(
+        select(Kelas).where(
+            Kelas.kode_mk == "IF201", Kelas.nama == "B", Kelas.semester == "20251"
+        )
+    ).scalar_one()
+    k_if204_a = db.execute(
+        select(Kelas).where(
+            Kelas.kode_mk == "IF204", Kelas.nama == "A", Kelas.semester == "20251"
+        )
+    ).scalar_one()
+
+    # Tambah kepesertaan Andi & Maya di IF102-A (Senin pagi) tanpa menyentuh data Rina/Sari/Dina.
+    for nim in ("2025004-0001", "2025004-0002"):
+        krs_20251 = db.execute(
+            select(KRS).where(KRS.nim == nim, KRS.semester == "20251")
+        ).scalar_one_or_none()
+        if krs_20251 is None:
+            db.add(
+                KRS(
+                    nim=nim,
+                    semester="20251",
+                    status=KRSStatus.APPROVED,
+                    dosen_pa_id=101,
+                    approved_at=datetime.now(timezone.utc),
+                    details=[KRSDetail(kode_mk="IF102", kelas_id=k_if102_a.id)],
+                )
+            )
+    db.flush()
+
+    j_if204_a = db.execute(
+        select(Jadwal).where(Jadwal.kelas_id == k_if204_a.id, Jadwal.hari == 3)
+    ).scalar_one()
+    j_if102_a = db.execute(
+        select(Jadwal).where(Jadwal.kelas_id == k_if102_a.id, Jadwal.hari == 1)
+    ).scalar_one()
+    j_if201_b = db.execute(
+        select(Jadwal).where(Jadwal.kelas_id == k_if201_b.id, Jadwal.hari == 1)
+    ).scalar_one()
+
+    def _seed_kelas_sessions(
+        jadwal: Jadwal,
+        start_date: date,
+        total_pertemuan: int,
+        status_matrix: dict[str, list[AttendanceStatus]],
+        prefix: str,
+    ) -> None:
+        for idx in range(total_pertemuan):
+            tgl = start_date + timedelta(days=7 * idx)
+            pertemuan_no = idx + 1
+            jti = f"SEED-{prefix}-P{pertemuan_no:02d}"
+            sess = db.execute(
+                select(AttendanceSession).where(
+                    AttendanceSession.jadwal_id == jadwal.id,
+                    AttendanceSession.tanggal == tgl,
+                )
+            ).scalar_one_or_none()
+            gen_utc = datetime.combine(
+                tgl, jadwal.jam_mulai, tzinfo=timezone(timedelta(hours=7))
+            ).astimezone(timezone.utc)
+            if sess is None:
+                sess = AttendanceSession(
+                    jadwal_id=jadwal.id,
+                    pertemuan_ke=pertemuan_no,
+                    tanggal=tgl,
+                    dosen_id=jadwal.dosen_id,
+                    active_jti=jti,
+                    generated_at=gen_utc,
+                    expires_at=gen_utc + timedelta(minutes=15),
+                    valid_minutes=15,
+                    is_active=True,
+                )
+                db.add(sess)
+                db.flush()
+
+            for nim, daftar_st in status_matrix.items():
+                st = daftar_st[idx]
+                exists_rec = db.execute(
+                    select(AttendanceRecord).where(
+                        AttendanceRecord.session_id == sess.id,
+                        AttendanceRecord.nim == nim,
+                    )
+                ).scalar_one_or_none()
+                if exists_rec is None:
+                    menit_offset = 18 if st == AttendanceStatus.terlambat else 4
+                    db.add(
+                        AttendanceRecord(
+                            session_id=sess.id,
+                            nim=nim,
+                            status=st,
+                            scanned_at=gen_utc + timedelta(minutes=menit_offset),
+                            token_jti=jti,
+                            notes=f"Seed pertemuan #{pertemuan_no}",
+                        )
+                    )
+
+    # 1. IF204-A (Rabu 08:00, 10 pertemuan): Budi 70%, Rina 90%, Sari 80%
+    _seed_kelas_sessions(
+        j_if204_a,
+        date(2026, 9, 2),
+        10,
+        {
+            "2025001-0001": [AttendanceStatus.hadir] * 7 + [AttendanceStatus.alpha] * 3,
+            "2025001-0002": [AttendanceStatus.hadir] * 9 + [AttendanceStatus.alpha],
+            "2025001-0003": [AttendanceStatus.hadir] * 8 + [AttendanceStatus.alpha] * 2,
+        },
+        "IF204A",
+    )
+
+    # 2. IF102-A (Senin pagi 08:00, 6 pertemuan): Budi, Andi, & Maya sering absent Senin pagi
+    _seed_kelas_sessions(
+        j_if102_a,
+        date(2026, 9, 7),
+        6,
+        {
+            "2025001-0001": [AttendanceStatus.hadir] * 2 + [AttendanceStatus.alpha] * 4,
+            "2025004-0001": [AttendanceStatus.hadir] * 3 + [AttendanceStatus.alpha] * 3,
+            "2025004-0002": [AttendanceStatus.hadir] * 3 + [AttendanceStatus.alpha] * 3,
+        },
+        "IF102A",
+    )
+
+    # 3. IF201-B (Senin siang 14:40, 6 pertemuan): Budi 100%, Rina 100%, Sari 100% (1 telat)
+    _seed_kelas_sessions(
+        j_if201_b,
+        date(2026, 9, 7),
+        6,
+        {
+            "2025001-0001": [AttendanceStatus.hadir] * 6,
+            "2025001-0002": [AttendanceStatus.hadir] * 6,
+            "2025001-0003": [AttendanceStatus.hadir] * 5 + [AttendanceStatus.terlambat],
+        },
+        "IF201B",
+    )
+
+    db.commit()
+
+
 def main() -> None:
-    """Menjalankan proses seeding PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan secara idempotent."""
+    """Menjalankan proses seeding PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi secara idempotent."""
     with SessionLocal() as db:
         seed_data(db)
         seed_krs_data(db)
@@ -932,7 +1079,8 @@ def main() -> None:
         seed_nilai_demo_data(db)
         seed_transkrip_demo_data(db)
         seed_keuangan_data(db)
-    print("Seeding data PMB, KRS, Jadwal, Nilai, Transkrip, dan Keuangan selesai.")
+        seed_presensi_data(db)
+    print("Seeding data PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, dan Presensi selesai.")
 
 
 if __name__ == "__main__":

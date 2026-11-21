@@ -1,4 +1,4 @@
-"""Model ORM SQLAlchemy untuk Modul PMB, KRS, Jadwal, Nilai, dan Keuangan."""
+"""Model ORM SQLAlchemy untuk Modul PMB, KRS, Jadwal, Nilai, Keuangan, dan Presensi."""
 
 from app.models.jadwal import Dosen, Jadwal, Kelas, Outbox, Ruangan
 from app.models.keuangan import (
@@ -29,9 +29,17 @@ from app.models.pmb import (
     ProgramStudi,
     StatusPMB,
 )
+from app.models.presensi import (
+    AttendanceRecord,
+    AttendanceSession,
+    AttendanceStatus,
+)
 
 __all__ = [
     "Actor",
+    "AttendanceRecord",
+    "AttendanceSession",
+    "AttendanceStatus",
     "Base",
     "Billing",
     "BillingStatus",
