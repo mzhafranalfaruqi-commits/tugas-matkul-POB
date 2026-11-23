@@ -1,6 +1,6 @@
 # Architecture Decision Records (ADR) — Modul PMB SEVIMA-Mini
 
-Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplementasikan modul Penerimaan Mahasiswa Baru (PMB) pada proyek **SEVIMA-Mini** (Minggu 3–4), sebagai kelanjutan dari artefak desain UML pada Minggu 1–2.
+Dokumen ini mencatat keputusan arsitektural dan teknis utama dalam mengimplementasikan modul Penerimaan Mahasiswa Baru (PMB) pada proyek **SEVIMA-Mini** (Minggu 3–4), sebagai kelanjutan dari artefak desain UML pada Minggu 1–2 (lihat [ADR-architecture-decisions.md](ADR-architecture-decisions.md) dan [ADR-architecture-decisions.pdf](ADR-architecture-decisions.pdf)).
 
 ---
 
