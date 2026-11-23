@@ -92,11 +92,62 @@ classDiagram
 
 ---
 
-### 4. Siklus OPAR Minggu 1–2 (Fase Desain UML)
-- **Observe:** Output awal AI untuk UML sistem akademis sering mengandung 5 cacat desain utama: *public* pada atribut sensitif (`password`, `ipk`), *god object* (`Mahasiswa` menampung validasi KRS hingga cetak PDF), *circular dependency* (`Course <-> Schedule <-> Dosen`), tertukarnya *composition* vs *aggregation* dan arah `«extend»`, serta sequence diagram tanpa *alternate flow*.
-- **Plan:** Menyusun prompt terstruktur 5 unsur (*Role, Konteks, Komponen, Constraint, Format*) secara bertahap (domain dulu baru refactor SOLID), mengaudit setiap hasil dengan uji *is-a*, uji siklus hidup (*lifecycle*), dan graf dependensi asiklik (DAG), lalu menyinkronkan penamaan ke seluruh 5 file diagram di `diagrams/`.
-- **Act:** Menghasilkan 5 diagram Mermaid sinkron (`class-diagram.mmd`, `usecase-diagram.mmd`, `sequence-pmb.mmd`, `sequence-krs.mmd`, `sequence-presensi.mmd`), menulis [docs/ADR-architecture-decisions.pdf](../docs/ADR-architecture-decisions.pdf), menyusun laporan [docs/Final-UML-diagram.pdf](../docs/Final-UML-diagram.pdf), dan mendokumentasikan 7 prompt terbaik + perbandingan *before–after*.
-- **Reflect:** Investasi waktu pada validasi relasi, pemecahan *god object* (`ValidationRule`, `NIMFactory`, `NotificationObserver`), dan penambahan *alternate flow* pada Minggu 1–2 langsung menjadi cetak biru arsitektur bersih saat implementasi Python/SQLAlchemy/FastAPI pada Minggu 3–12—terbukti dari ketiadaan perubahan struktur konseptual besar saat membangun Chain of Responsibility, State Machine, Observer Outbox, Dual Transcript Renderer, Billing SPP, dan Presensi QR.
+### 3B. Log & Refinement Minggu 2 (Audit SOLID, Self-Critique, & Sinkronisasi Sequence)
+
+| Field | Detail Dokumentasi (Format Slide Minggu 2) |
+| :--- | :--- |
+| **Minggu** | Minggu 2 (*Refinement & Skenario: Desain SEVIMA-Mini yang Matang*) |
+| **Fitur** | Refinement Use Case (`«extend»` Revisi KRS & Denda), Audit 5 Pilar SOLID (`PengisiKRS`, `PenyetujuKRS`, `Penilai`, `UserFactory`, `KRSValidator`, `KRSRepository`, `KRSEventBus`), Sequence `loop`, self-call, error *collect-all*, & pesan asinkron `(-)` |
+| **LLM / Tool** | Antigravity AI Assistant & Mermaid Diagram Engine (diverifikasi ulang secara manual per slide materi Minggu 2) |
+| **Prompt Kunci (Self-Critique + Refinement)** | 1. *Self-Critique Prompt:* *"Kritik desain UML SEVIMA-Mini dari branch `tugas-1` (`46c0499`, `207b981`, `4e530d0`) seperti dosen penguji OOP: temukan 5 kelemahan terbesar terkait pelanggaran SOLID (ISP/DIP), God Object, skenario gagal yang terlewat, inkonsistensi antar diagram, dan coupling sinkron."*<br>2. *Refinement Sequence & Class:* *"Pecah antarmuka gemuk dengan ISP (`PengisiKRS`, `PenyetujuKRS`, `Penilai`), pisahkan kontrak persistensi `KRSRepository <<interface>>` (DIP), ganti `NIMFactory` menjadi `UserFactory.buat(peran, data)`, tambahkan `loop` prasyarat di `KRSValidator`, pesan error spesifik collect-all, dan ubah notifikasi ke panah asinkron `-)`."* |
+| **Artefak AI Awal (`tugas-1`)** | Baseline Minggu 1 pada branch `tugas-1` (commit [`46c0499`](../diagrams/class-diagram.mmd), [`207b981`](../diagrams/usecase-diagram.mmd), [`4e530d0`](../diagrams/sequence-pmb.mmd)): belum memisahkan interface ISP peran KRS/Nilai, `KRSManager` masih langsung menyentuh `Database` tanpa abstraksi `KRSRepository`, `Approve / Revisi KRS` masih digabung dalam 1 use case, notifikasi masih memakai panah sinkron `->>`, dan belum ada `loop` per mata kuliah pada `KRSValidator`. |
+| **Revisi Manual Minggu 2** | 1. Memecah *god object* konseptual `SistemAkademik` menjadi 5 service terfokus (`SistemPMB`, `KRSManager`, `JadwalService`, `KeuanganService`, `PresensiService`) + `KRSValidator` + `NotificationService`.<br>2. Menambahkan interface ISP (`PengisiKRS`, `PenyetujuKRS`, `Penilai`), kontrak DIP (`KRSRepository <<interface>>` -> `PostgresKRSRepository`), `UserFactory`, dan `KRSEventBus`.<br>3. Memisahkan `UC_AppKRS` (`Approve KRS`) dan `UC_RevKRS` (`Ajukan Revisi KRS`) dengan panah `«extend»`, serta menamai ulang `Bayar Denda Keterlambatan`.<br>4. Menyelaraskan 100% nama peserta dan method pada `sequence-pmb.mmd`, `sequence-krs.mmd`, dan `sequence-presensi.mmd` (termasuk `loop`, self-call, error *collect-all*, dan panah asinkron `-)`). |
+
+**Before–After 2A — Pemecahan *God Object* `SistemAkademik` Menuju Modular Service + ISP + DIP:**
+
+```mermaid
+classDiagram
+    %% BEFORE (Anti-pattern AI naif: 1 God Object mengurus semua domain)
+    class SistemAkademik_Before {
+        +daftarPMB()
+        +approvePMB()
+        +generateNIM()
+        +isiKRS()
+        +validasiKRS()
+        +approveKRS()
+        +buatJadwal()
+        +inputNilai()
+        +bayarSPP()
+        +scanQR()
+    }
+```
+
+```mermaid
+classDiagram
+    %% AFTER (Minggu 2: SRP Services + ISP Role Interfaces + DIP KRSRepository + Observer)
+    class PengisiKRS { <<interface>> +ajukanKRS(krs) bool }
+    class PenyetujuKRS { <<interface>> +setujuiKRS(krs) bool }
+    class KRSRepository { <<interface>> +getKRS(nim, sem) KRS +cekPrasyaratLulus(nim, mk) bool +simpanKRS(krs) void }
+    class KRSValidator { +validasi(krs, repo) List~String~ +validasiBatasSKS(total, maks) bool }
+    class KRSManager { +ajukanKRS(pelaku, krs) String +prosesApprovalPA(dosen, krsId, keputusan, catatan) String }
+    PengisiKRS <|.. Mahasiswa
+    PenyetujuKRS <|.. Dosen
+    KRSManager --> KRSValidator
+    KRSManager --> KRSRepository
+    KRSManager ..> NotificationService
+```
+
+**Before–After 2B — Sequence Diagram *Happy Path* vs Skenario Lengkap (`loop`, Self-Call, Error Spesifik, & Async `-)`):**
+- **Before (`tugas-1` awal / naif):** Notifikasi `PMB->>+Notif` / `KM->>+Notif` menggunakan panah sinkron (`->>`) yang memblokir HTTP response pengguna; validasi prasyarat langsung mengakses `Database` tanpa kontrak `KRSRepository`; `sequence-pmb.mmd` belum memisahkan skenario khusus **berkas tidak lengkap sebelum generate NIM** dan **retry email gagal tanpa menggagalkan approval**.
+- **After (`tugas-2` refined):** `sequence-krs.mmd` memodelkan `loop` pengecekan `KRSRepository.cekPrasyaratLulus()` per mata kuliah, self-call `KRSValidator.validasiBatasSKS(totalSKS, 24)` dan `cekJadwalBentrok()`, daftar error *collect-all* yang menyebut rincian SPP/IF101/26 SKS/IF201 vs IF203, serta panah asinkron `-)` ke `NotificationService` di ketiga sequence diagram (`sequence-pmb.mmd`, `sequence-krs.mmd`, `sequence-presensi.mmd`).
+
+---
+
+### 4. Siklus OPAR Minggu 1–2 (Fase Desain UML — Baseline & Refinement)
+- **Observe:** Output awal AI untuk UML sistem akademis (Minggu 1) maupun draf `tugas-1` awal mengandung 6 titik perbaikan: atribut sensitif (`password`, `ipk`) berisiko bocor, potensi *god object* (`SistemAkademik` > 30 method), ketiadaan *Interface Segregation* bagi peran ganda `Dosen`/`Mahasiswa`, ketergantungan langsung service ke `Database` konkrit (melanggar DIP), notifikasi sinkron `->>` yang membebani waktu respons transaksi, serta `Approve / Revisi KRS` yang masih menyatu di Use Case.
+- **Plan:** Minggu 1 menyusun prompt terstruktur 5 unsur (*Role, Konteks, Komponen, Constraint, Format*) untuk membentuk cetak biru domain & DAG awal. Minggu 2 menjalankan **Self-Critique Prompt** terhadap artefak `tugas-1`, mengaudit seluruh 5 pilar SOLID (SRP, OCP, LSP, ISP, DIP), menyiapkan interface peran (`PengisiKRS`, `PenyetujuKRS`, `Penilai`), kontrak `KRSRepository`, `UserFactory`, `KRSValidator`, `KRSEventBus`, serta memetakan *alternate flow*, `loop`, dan komunikasi asinkron `-)` secara sinkron di seluruh file diagram.
+- **Act:** Menyempurnakan 5 diagram Mermaid sinkron (`class-diagram.mmd`, `usecase-diagram.mmd`, `sequence-pmb.mmd`, `sequence-krs.mmd`, `sequence-presensi.mmd`), menyusun ulang [docs/ADR-architecture-decisions.pdf](../docs/ADR-architecture-decisions.pdf) dengan template 5 bagian (termasuk Alternatif & Trade-off serta Pattern), menyusun laporan [docs/Final-UML-diagram.pdf](../docs/Final-UML-diagram.pdf) 8 halaman dengan pemecahan halaman Class Diagram yang bersih, dan mencatat log 7 prompt Minggu 1 + Self-Critique Minggu 2.
+- **Reflect:** Audit 5 pilar SOLID + penambahan *alternate flow* dan pemisahan kontrak `KRSRepository` serta `KRSEventBus` pada Minggu 2 membuat arsitektur implementasi Minggu 3–12 tidak memerlukan perombakan struktur—setiap entitas, service, dan pola desain langsung terpetakan 1-ke-1 ke paket kode Python (`app/models/`, `app/services/`, `app/patterns/`, `app/repositories/`).
 
 ---
 
