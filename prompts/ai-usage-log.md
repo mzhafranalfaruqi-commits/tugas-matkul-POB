@@ -1,8 +1,106 @@
-# AI Usage Log — Modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi SEVIMA-Mini (Minggu 3–12)
+# AI Usage Log — SEVIMA-Mini (Minggu 1–12)
 
-Catatan terstruktur ini mengikuti format silabus mata kuliah **Pemrograman Berorientasi Objek untuk Sistem AI Agenik** serta memenuhi prinsip **AI-First Charter** (seluruh prompt, contoh data, dan fixture uji hanya memakai data *dummy* fiktif tanpa PII mahasiswa asli).
+Catatan terstruktur ini mendokumentasikan seluruh penggunaan AI dari tahap perancangan arsitektur UML (**Minggu 1–2**) hingga implementasi modul PMB, KRS, Jadwal, Nilai, Transkrip, Keuangan, & Presensi (**Minggu 3–12**) pada mata kuliah **Pemrograman Berorientasi Objek untuk Sistem AI Agenik**. Seluruh proses mematuhi **AI-First Development Charter** (seluruh prompt, contoh data, dan fixture uji hanya memakai data *dummy* fiktif tanpa PII mahasiswa asli, tidak ada output AI yang dipakai tanpa validasi kritis, dan seluruh jejak iterasi terdokumentasi transparan).
 
 ---
+
+## Bagian A — Minggu 1–2: Desain Sistem Akademis dengan UML Berbantuan AI
+
+### 1. Kepatuhan AI-First Development Charter (Minggu 1–2)
+1. **Yang Diizinkan:** Menggunakan LLM (Gemini / Claude / Mistral) dan Copilot IDE (Continue / Codeium) untuk mengeksplorasi domain, menghasilkan draf Mermaid UML, serta melakukan audit prinsip SOLID—dengan syarat seluruh desain dipahami, divalidasi relasinya, dan disesuaikan sendiri.
+2. **Yang Dilarang:** Menyalin (*copy-paste*) diagram AI mentah tanpa memeriksa *visibility*, kardinalitas, arah relasi, dan *alternate flow*; memasukkan data pribadi/rahasia (NIK, nilai asli mahasiswa) ke prompt; serta menghapus riwayat iterasi AI.
+3. **Bukti Wajib:** Log 7 prompt terbaik beranatomi lengkap, tabel perbandingan hasil AI awal vs revisi manual (*before–after*) beserta alasan teknisnya, cuplikan revisi kode Mermaid, serta refleksi **OPAR** siap uji lisan (*viva* tanpa AI).
+
+---
+
+### 2. 7 Prompt Terbaik Minggu 1–2 (Anatomi 5 Unsur: Role, Konteks, Komponen, Constraint, Format)
+
+| No | Fokus Desain | Prompt Buruk (Awal) vs Prompt Terbaik (Iterasi Final) | Hasil & Nilai Tambah Iterasi |
+| :--- | :--- | :--- | :--- |
+| **1** | **Class Diagram Inti + Hierarki User** | **Buruk:** *"Buatkan class diagram sistem kampus."* (AI menebak entitas `Kantin`/`Gedung`, atribut *public* semua, tanpa `Payment`).<br>**Terbaik:** *"`#role` Anda adalah arsitek OOP. `#konteks` Sistem akademis SEVIMA-Mini (modul PMB, KRS, Jadwal, Nilai, SPP, Presensi). `#komponen` Buat `User <<abstract>>` (turunan: `CalonMahasiswa`, `Mahasiswa`, `Dosen`, `Admin`), `ProgramStudi`, `Course`, `KRS`, `Enrollment`, `Schedule`, `Grade`, dan `Payment`. `#constraint` Terapkan Single Responsibility, wajib visibility `+`/`-`/`#` (`-password` & `-ipk` private), pisahkan composition vs aggregation, serta tulis kardinalitas. `#format` Output kode Mermaid `classDiagram` saja tanpa penjelasan panjang."* | Menghilangkan class halusinasi di luar kebutuhan, mengunci enkapsulasi `-password` dan `-ipk`, serta memaksa AI menulis kardinalitas eksplisit (`1`, `0..1`, `0..*`, `1..*`). |
+| **2** | **Audit & Refactor Prinsip SOLID (Anti God-Object)** | *"`#role` Sebagai senior software architect, audit `classDiagram` berikut terhadap prinsip SOLID (khususnya SRP, OCP, dan DIP). `#konteks` Saat ini `Mahasiswa` memiliki method `isiKRS()`, `validasiKRS()`, `hitungIPK()`, `generateTranskripPDF()`, dan `kirimEmailTagihan()`, serta terdapat ketergantungan `Course -> Schedule -> Dosen -> Course`. `#komponen` Refactor dengan memecah ke service `PMBService`, `NIMFactory`, `KRSManager`, `ValidationRule <<interface>>` (5 aturan), `TranscriptService`, dan `NotificationObserver <<interface>>`. `#constraint` Tidak boleh ada class dengan >10 method (bebas god object) dan bebas circular dependency. `#format` Kode Mermaid `classDiagram`."* | Memecah *god object* menjadi kelas kecil terfokus (maks 5 method/class), memperkenalkan pola **Strategy/CoR**, **Factory**, & **Observer**, serta memutus siklus dependensi menjadi DAG asiklik. |
+| **3** | **Validasi Relasi UML (Composition vs Aggregation & M2M)** | *"`#role` Anda adalah reviewer desain UML. `#konteks` Validasi seluruh relasi antar-class pada `classDiagram` SEVIMA-Mini. `#komponen` Periksa: (a) relasi `CalonMahasiswa` ke `Mahasiswa` saat diterima PMB, (b) relasi `Mahasiswa` dan `Course` melalui `Enrollment`, (c) pelekatan `Grade`, dan (d) `ProgramStudi` ke `Dosen`/`Mahasiswa`. `#constraint` Gunakan uji siklus hidup: jika wadah dihapus apakah bagian ikut mati (`*--` composition vs `o--` aggregation), dan uji 'is-a' untuk inheritance. `#format` Perbaiki kode Mermaid dan jelaskan alasannya dalam tabel ringkas."* | Mengubah `CalonMahasiswa` ke `Mahasiswa` dari inheritance keliru menjadi asosiasi konversi `1 --> 0..1` lewat `NIMFactory`; memecah M2M via `Enrollment`; memindahkan `Grade` ke `Enrollment *-- Grade`; membedakan `ProgramStudi o-- Dosen` vs `KRS *-- Enrollment`. |
+| **4** | **Use Case Diagram 5 Aktor (`«include»` & `«extend»`)** | *"`#role` Anda adalah analis sistem. `#konteks` Buat Use Case Diagram sistem akademis SEVIMA-Mini lintas 6 modul (PMB, KRS, Jadwal, Nilai/Transkrip, SPP, Presensi QR). `#komponen` Aktor eksternal: `Calon Mahasiswa`, `Mahasiswa`, `Dosen`, `Admin`, dan `Sistem PMB`. Use case inti: Daftar Kuliah, Verifikasi PMB, Generate NIM Otomatis, Isi KRS, Validasi KRS, Cek Tunggakan SPP, Approve/Revisi KRS, Kirim Notifikasi Revisi, Kelola Jadwal, Deteksi Bentrok, Input Nilai, Validasi Presensi >= 75%, Catat Audit Trail, Generate Transkrip, Hitung IPS/IPK, Bayar SPP, Hitung Denda, Kelola Tagihan, Buat/Scan QR & Validasi Token. `#constraint` Tempatkan seluruh aktor di luar batas sistem, dan arahkan panah `«include»` (Base -> Included) serta `«extend»` (Extending -> Base) sesuai standar UML. `#format` Mermaid `flowchart LR`."* | Memastikan seluruh 5 aktor berada di luar `subgraph SistemAkademis` serta mengoreksi arah panah `«extend»` pada `Kirim Notifikasi Revisi -.-> Approve / Revisi KRS` dan `Hitung Denda Keterlambatan -.-> Bayar Tagihan SPP`. |
+| **5** | **Sequence Diagram Proses PMB & Generate NIM Atomik** | *"`#role` Sebagai arsitek backend OOP, buat sequence diagram skenario Proses Pendaftaran Mahasiswa Baru (PMB). `#konteks` Alur registrasi `CalonMahasiswa` hingga verifikasi `Admin` di SEVIMA-Mini. `#komponen` Participant: `CalonMahasiswa`, `Admin`, `PMBService`, `NIMFactory`, `Database`, `NotificationService`. `#constraint` Wajib gunakan `autonumber` dan blok `alt` lengkap untuk: format input invalid (`400`), email duplikat (`409`), pendaftar tidak ada (`404`), konflik status `rejected` (`409`), idempotency `already approved` (`200`), overflow nomor >9999 (`400`), serta rollback transaksi saat gagal commit. `#format` Mermaid `sequenceDiagram`."* | Menggantikan skenario *happy path* tunggal menjadi alur transaksional aman berbasis *database lock* dan `NIMFactory` lengkap dengan seluruh jalur error & idempotency. |
+| **6** | **Sequence Diagram Validasi KRS & Prasyarat + Review PA** | *"`#role` Sebagai arsitek sistem, buat sequence diagram Validasi KRS dengan pengecekan prasyarat di SEVIMA-Mini. `#konteks` Mahasiswa submit KRS yang memvalidasi tunggakan SPP, duplikasi, prasyarat lulus (`>= 2.0`), batas 24 SKS, dan bentrok interval jadwal, lalu diproses Dosen PA. `#komponen` Participant: `Mahasiswa`, `KRSManager`, `ValidationRule Chain`, `Database`, `NotificationService`, `Dosen PA`. `#constraint` Gunakan `autonumber`, tampilkan `alt` untuk blokir tunggakan SPP (`403`), gagal validasi (`400`), konflik versi *optimistic lock* (`409`), status `Pending Approval`, serta blok `opt` review PA (`403`/Approve/Revisi). `#format` Mermaid `sequenceDiagram`."* | Menyinkronkan nama method dengan Class Diagram (`submitKRS`, `validate`, `ubahStatus`, `approveKRS`, `reviseKRS`, `kirimNotifikasi`) dan mengunci *alternate flow* lengkap agar mudah diturunkan ke Chain of Responsibility di Minggu 5–6. |
+| **7** | **Sequence Diagram Presensi Scan QR Code (Prompt Pack)** | *"`#role` Anda adalah arsitek sistem akademis. `#konteks` Skenario bonus presensi mahasiswa scan QR code di SEVIMA-Mini. `#komponen` Participant: `Mahasiswa`, `PresensiService`, `Database`, `NotificationService`, `Dosen`. `#constraint` Validasi token JWT (`401`), enrollment kelas (`403`), kecocokan `jti` & hari jadwal kuliah (`400`), radius geofence (`400`), duplikasi scan (`409`), catat status hadir/terlambat, dan kirim notifikasi ke Dosen. `#format` Mermaid `sequenceDiagram` dengan `autonumber`."* | Menambahkan lapisan *error handling* lengkap (`alt` 5 cabang error) di atas Prompt Pack #3 tugas sehingga siap diimplementasikan di Modul Presensi Minggu 12. |
+
+---
+
+### 3. Perbandingan Hasil AI Awal vs Revisi Manual (*Before–After*) & Alasan Revisi
+
+| No | Komponen / Aspek | Output AI Awal (*Before*) | Revisi Manual Mahasiswa (*After*) | Mengapa Revisi Diperlukan? |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | **Visibility Modifier & Enkapsulasi** | `+String password`, `+float ipk`, dan `+String status` dibuat *public* (`+`). | `-String password` dan `-Decimal ipk` dibuat *private* (`-`), `#id`/`#username`/`#nama`/`#email` dibuat *protected* (`#`), akses IPK melalui `+getIPK()` & `TranscriptService`. | Pelanggaran prinsip **Encapsulation**: jika `ipk` atau `password` bersifat *public*, bagian program mana pun bisa mengubah `mahasiswa.ipk = 4.0` secara langsung tanpa perhitungan nilai sah atau membaca *password* langsung. |
+| **2** | **Hierarki `User` & Konversi `CalonMahasiswa`** | `class User` konkret dan `Mahasiswa` mewarisi `CalonMahasiswa` (atau `CalonMahasiswa` diubah tipenya saat diterima). | `User <<abstract>>` dengan 4 subclass sejajar (`CalonMahasiswa`, `Mahasiswa`, `Dosen`, `Admin`) + asosiasi konversi `CalonMahasiswa "1" --> "0..1" Mahasiswa` lewat `NIMFactory.createMahasiswa()`. | Dalam OOP, **objek tidak dapat berganti class** di *runtime*, dan `Mahasiswa` bukanlah spesialisasi (*is-a*) dari `CalonMahasiswa` karena tidak butuh `statusSeleksi` terus-menerus. Selain itu, tidak ada user tanpa peran sehingga `User` wajib `<<abstract>>`. |
+| **3** | **Anti *God Object* (SOLID — SRP & DIP)** | `class Mahasiswa` berisi 15–22 method (`daftarPMB`, `isiKRS`, `validasiKRS`, `hitungIPK`, `cetakTranskripPDF`, `bayarSPP`, `kirimNotifikasi`). | `Mahasiswa` fokus pada data diri & aksi dasar (`<= 4` method). Tanggung jawab dipisah ke `PMBService`, `NIMFactory`, `KRSManager`, `ValidationRule <<interface>>`, `TranscriptService`, dan `NotificationObserver <<interface>>`. | *God Object* melanggar **Single Responsibility Principle (SRP)**: perubahan format PDF transkrip atau aturan SKS akan memaksa perubahan pada class `Mahasiswa`, membuatnya rapuh, sulit diuji, dan melanggar *Dependency Inversion*. |
+| **4** | **Penghapusan *Circular Dependency*** | `Course` memanggil `Schedule`, `Schedule` memanggil `Dosen`, dan `Dosen` menyimpan daftar `Course` (`Course -> Schedule -> Dosen -> Course`). | Graf dependensi dibuat **asiklik (DAG)**: `Course "1" *-- "1..*" Schedule` dan `Dosen "1" --> "0..*" Schedule` (tanpa edge balik dari `Course` ke `Dosen` atau `Schedule` ke `Course`). | Ketergantungan melingkar (*circular dependency*) menyebabkan modul tidak bisa diuji secara terisolasi, memicu masalah inisialisasi/import siklik, dan meningkatkan *coupling*. |
+| **5** | **Dekomposisi M2M & Pelekatan `Grade`** | Relasi langsung `Mahasiswa "*" -- "*" Course` dan `Mahasiswa "1" --> "0..*" Grade`. | Dipecah memakai class perantara `Enrollment` (`KRS "1" *-- "0..*" Enrollment` dan `Enrollment "0..*" --> "1" Course`), serta `Enrollment "1" *-- "0..1" Grade`. | Relasi M2M langsung tidak punya tempat menyimpan `semester` dan `status` pengambilan MK. Nilai (`Grade`) selalu melekat pada satu pengambilan mata kuliah oleh satu mahasiswa di semester tertentu (`Enrollment`), bukan langsung ke `Mahasiswa`. |
+| **6** | **Composition (`*--`) vs Aggregation (`o--`)** | AI menukar `ProgramStudi *-- Dosen` (composition) dan `KRS o-- Enrollment` (aggregation). | Dibalik menjadi `ProgramStudi "1" o-- "1..*" Dosen` (aggregation) dan `KRS "1" *-- "0..*" Enrollment` (composition). | Uji siklus hidup (*lifecycle*): jika `ProgramStudi` ditutup, `Dosen`/`Mahasiswa` tetap eksis dan bisa pindah prodi (**Aggregation**). Sebaliknya, jika satu `KRS` dihapus, seluruh baris `Enrollment` dan `Grade` di dalamnya kehilangan makna dan ikut terhapus (**Composition**). |
+| **7** | **Struktur & Arah Panah Use Case Diagram** | Aktor `Sistem PMB` diletakkan di dalam kotak sistem; arah panah `«extend»` ditarik dari Base ke Extending (`Approve KRS -.-> Notifikasi Revisi`). | Seluruh 5 aktor diletakkan di **luar** `Sistem Akademis SEVIMA-Mini`; panah `«include»` ditarik `Base -.-> Included` dan panah `«extend»` ditarik `Extending -.-> Base` (`Kirim Notifikasi Revisi -.-> Approve / Revisi KRS`, `Hitung Denda Keterlambatan -.-> Bayar Tagihan SPP`). | Sesuai spesifikasi UML, aktor bersifat eksternal terhadap sistem. Pada relasi `«extend»`, use case tambahanlah yang menempel/menunjuk ke use case dasar (*conditional extension*), kebalikan dari arah `«include»`. |
+| **8** | **Sequence Diagram: *Alternate Flow* & Sinkronisasi** | AI hanya menggambar alur sukses (*happy path* tanpa blok `alt`), langsung mengubah status tanpa lock DB atau cek tunggakan SPP, dan nama method berbeda dari Class Diagram. | Menambahkan frame `alt`/`opt` pada ketiga sequence diagram (`400`, `401`, `403`, `404`, `409`, `rollback`), menjaga keseimbangan `activate`/`deactivate`, serta menyinkronkan nama method tepat dengan Class Diagram. | Sequence diagram tanpa *alternate flow* gagal memodelkan kegagalan validasi bisnis (prasyarat tidak lulus, >24 SKS, bentrok, QR expired, tunggakan SPP) dan risiko *race condition* transaksi database. |
+
+#### Cuplikan Before–After Revisi Diagram (Class Diagram & Sequence Diagram)
+
+**1. Before (Output AI Awal — God Object, Public Password, Circular, Salah Relasi):**
+```mermaid
+classDiagram
+    class User {
+        +int id
+        +String password
+    }
+    class Mahasiswa {
+        +float ipk
+        +isiKRS()
+        +validasiKRS()
+        +hitungIPK()
+        +cetakTranskripPDF()
+        +bayarSPP()
+        +kirimEmail()
+    }
+    User <|-- Mahasiswa
+    ProgramStudi *-- Dosen
+    Mahasiswa "1" --> "*" Grade
+    Course --> Schedule
+    Schedule --> Dosen
+    Dosen --> Course
+```
+
+**2. After (Revisi Manual — Abstract User, Encapsulation, Composition vs Aggregation, SOLID DAG):**
+```mermaid
+classDiagram
+    class User {
+        <<abstract>>
+        #int id
+        #String username
+        -String password
+        +login(username, password) bool
+    }
+    class Mahasiswa {
+        -String nim
+        -Decimal ipk
+        +getIPK() Decimal
+    }
+    User <|-- Mahasiswa
+    ProgramStudi "1" o-- "1..*" Dosen : menaungi
+    KRS "1" *-- "0..*" Enrollment : berisi
+    Enrollment "1" *-- "0..1" Grade : menghasilkan
+    Course "1" *-- "1..*" Schedule : dijadwalkanPada
+    Dosen "1" --> "0..*" Schedule : mengampu
+    KRSManager "1" o-- "1..*" ValidationRule : menerapkan
+```
+
+---
+
+### 4. Siklus OPAR Minggu 1–2 (Fase Desain UML)
+- **Observe:** Output awal AI untuk UML sistem akademis sering mengandung 5 cacat desain utama: *public* pada atribut sensitif (`password`, `ipk`), *god object* (`Mahasiswa` menampung validasi KRS hingga cetak PDF), *circular dependency* (`Course <-> Schedule <-> Dosen`), tertukarnya *composition* vs *aggregation* dan arah `«extend»`, serta sequence diagram tanpa *alternate flow*.
+- **Plan:** Menyusun prompt terstruktur 5 unsur (*Role, Konteks, Komponen, Constraint, Format*) secara bertahap (domain dulu baru refactor SOLID), mengaudit setiap hasil dengan uji *is-a*, uji siklus hidup (*lifecycle*), dan graf dependensi asiklik (DAG), lalu menyinkronkan penamaan ke seluruh 5 file diagram di `diagrams/`.
+- **Act:** Menghasilkan 5 diagram Mermaid sinkron (`class-diagram.mmd`, `usecase-diagram.mmd`, `sequence-pmb.mmd`, `sequence-krs.mmd`, `sequence-presensi.mmd`), menulis [docs/ADR-architecture-decisions.pdf](../docs/ADR-architecture-decisions.pdf), menyusun laporan [docs/Final-UML-diagram.pdf](../docs/Final-UML-diagram.pdf), dan mendokumentasikan 7 prompt terbaik + perbandingan *before–after*.
+- **Reflect:** Investasi waktu pada validasi relasi, pemecahan *god object* (`ValidationRule`, `NIMFactory`, `NotificationObserver`), dan penambahan *alternate flow* pada Minggu 1–2 langsung menjadi cetak biru arsitektur bersih saat implementasi Python/SQLAlchemy/FastAPI pada Minggu 3–12—terbukti dari ketiadaan perubahan struktur konseptual besar saat membangun Chain of Responsibility, State Machine, Observer Outbox, Dual Transcript Renderer, Billing SPP, dan Presensi QR.
+
+---
+
+## Bagian B — Minggu 3–12: Implementasi Modul SEVIMA-Mini
 
 ## Log Terstruktur per Minggu & Fitur
 
