@@ -1,175 +1,218 @@
-%% Class Diagram UML — Sistem Akademis SEVIMA-Mini (Minggu 1–2)
-%% Mengikuti prinsip SOLID, Encapsulation, Composition vs Aggregation, & Anti God-Object
-
 classDiagram
-    direction TB
+    %% ========================================================================
+    %% SEVIMA-Mini Class Diagram (Minggu 2 - Refinement SOLID & Design Patterns)
+    %% Refactored from God Object SistemAkademik -> Modular Services, ISP, DIP,
+    %% Strategy (ValidationRule), Factory (UserFactory), Observer (KRSEventBus)
+    %% ========================================================================
+
+    %% --- 1. Hierarki User & Interface Segregation Principle (ISP) ---
+    class PengisiKRS {
+        <<interface>>
+        +ajukanKRS(krs) bool
+    }
+
+    class PenyetujuKRS {
+        <<interface>>
+        +setujuiKRS(krs) bool
+        +revisiKRS(krs, catatan) bool
+    }
+
+    class Penilai {
+        <<interface>>
+        +inputNilai(enrollId, angka) Grade
+    }
 
     class User {
         <<abstract>>
         #int id
         #String username
-        -String password
-        #String nama
+        -String passwordHash
+        #String namaLengkap
         #String email
+        #bool isActive
         +login(username, password) bool
         +logout() void
-        +tampilkanDashboard()* DashboardView
+        +getPeran()* String
     }
 
     class CalonMahasiswa {
-        -String noDaftar
-        -String statusSeleksi
+        -String noPendaftaran
         -String jalurMasuk
-        +daftarPMB() bool
+        -String statusSeleksi
+        -bool berkasLengkap
+        +unggahBerkas(jenis, path) bool
         +cekStatusSeleksi() String
-        +tampilkanDashboard() DashboardView
+        +getPeran() String
     }
 
     class Mahasiswa {
         -String nim
-        -int semester
+        -int tahunMasuk
         -Decimal ipk
-        +isiKRS(krs) bool
-        +lihatTranskrip() Transkrip
+        -String statusAktif
         +getIPK() Decimal
-        +tampilkanDashboard() DashboardView
+        +ajukanKRS(krs) bool
+        +lihatTranskrip() String
+        +getPeran() String
     }
 
     class Dosen {
         -String nidn
-        -String bidangKeahlian
-        +approveKRS(krs, catatan) bool
-        +reviseKRS(krs, catatan) bool
-        +inputNilai(enrollment, huruf) bool
-        +tampilkanDashboard() DashboardView
+        -String jabatanFungsional
+        -int kuotaBimbingan
+        +setujuiKRS(krs) bool
+        +revisiKRS(krs, catatan) bool
+        +inputNilai(enrollId, angka) Grade
+        +bukaSesiPresensi(jadwalId, durasi) String
+        +getPeran() String
     }
 
     class Admin {
-        -String adminCode
-        -String departemen
-        +verifikasiPendaftar(calon) Mahasiswa
-        +kelolaJadwal(schedule) void
-        +kelolaTagihan(payment) void
-        +tampilkanDashboard() DashboardView
+        -String kodeAdmin
+        -String unitKerja
+        +kelolaMasterData(entitas, aksi) bool
+        +terbitkanTagihanSPP(nim, semester) Payment
+        +auditLogAkses() List~String~
+        +getPeran() String
     }
 
+    %% --- 2. Core Academic Entities & Lifecycle Ownership ---
     class ProgramStudi {
-        -String kode
-        -String nama
-        -String fakultas
-        +getDaftarDosen() List~Dosen~
+        -String kodeProdi
+        -String namaProdi
+        -String jenjang
+        -int maxSKSDefault
+        +hitungMaxSKSDariIPK(ipk) int
+        +tambahKurikulum(course) void
+        +cekKuotaProdi(kodeProdi) bool
     }
 
     class Course {
-        -String kode
-        -String nama
+        -String kodeMK
+        -String namaMK
         -int sks
-        +getInfo() String
-        +getPrasyarat() List~Course~
+        -int semesterRekomendasi
+        +getDetailMK() String
+        +cekPrasyarat(kodeLulus) bool
     }
 
     class KRS {
         -int id
         -String semester
         -String status
-        -int totalSks
+        -int totalSKS
         -int version
-        +tambahEnrollment(item) void
-        +ajukan() void
-        +ubahStatus(status, aktor) void
+        -DateTime submittedAt
+        +hitungTotalSKS() int
+        +ubahStatus(statusBaru) void
+        +tambahItem(enrollment) void
     }
 
     class Enrollment {
         -int id
-        -String semester
-        -String status
-        +setNilai(grade) void
-        +getBobotSks() Decimal
+        -String statusPresensi
+        -int totalHadir
+        -int totalPertemuan
+        +catatKehadiran(tokenQR, waktu) bool
+        +hitungPersentaseHadir() Decimal
+        +cekPesertaAktif(nim, jadwalId) bool
     }
 
     class Schedule {
         -int id
-        -int hari
+        -String hari
         -Time jamMulai
         -Time jamSelesai
-        -String ruangan
-        +isBentrok(other) bool
-        +isAktifHariIni(tanggal) bool
+        -String ruang
+        -int kuotaMaks
+        -String tokenQRAktif
+        +terapkanTokenQR(durasiMenit) String
+        +cekBentrokWaktu(lain) bool
+        +cocokkanTokenQR(jti, waktu) bool
+        +sisaKuota() int
     }
 
     class Grade {
+        -int id
         -Decimal nilaiAngka
         -String nilaiHuruf
         -Decimal bobot
-        +konversiBobot() Decimal
-        +isLulus() bool
+        -bool isFinal
+        +konversiHuruf(angka) String
+        +hitungBobot() Decimal
     }
 
     class Payment {
-        -String billingId
-        -String semester
+        -int id
+        -String nomorTagihan
         -Decimal nominal
         -Decimal denda
+        -String statusBayar
         -Date jatuhTempo
-        -Date tanggalBayar
-        -String status
-        +bayar(jumlah) bool
-        +hitungDenda(hariTerlambat) Decimal
+        +prosesPembayaran(metode, jumlah) bool
+        +hitungDendaKeterlambatan(hariTerlambat) Decimal
         +isLunas() bool
     }
 
-    class PMBService {
-        +daftarCalon(data) CalonMahasiswa
-        +verifikasiDanApprove(pendaftarId, admin) Mahasiswa
-        +tolakPendaftar(pendaftarId, admin) void
-    }
-
-    class NIMFactory {
-        +generateNIM(tahun, kodeProdi) String
-        +createMahasiswa(calon, nim) Mahasiswa
-    }
-
-    class KRSManager {
-        -List~ValidationRule~ rules
-        -List~NotificationObserver~ observers
-        +tambahMataKuliah(krs, course) bool
-        +validasiKRS(krs) List~String~
-        +submitKRS(krs) bool
-        +approveKRS(krs, dosen) bool
-        +reviseKRS(krs, dosen, catatan) bool
-    }
-
+    %% --- 3. Strategy Pattern: KRS Validation Rules (OCP) ---
     class ValidationRule {
         <<interface>>
-        +validate(krs, course) ValidationResult
+        +validate(krs, repo) String
     }
 
-    class DuplicateEnrollmentRule {
-        +validate(krs, course) ValidationResult
+    class PrasyaratRule {
+        -String namaAturan
+        +validate(krs, repo) String
     }
 
-    class SKSValidationRule {
-        -int maxSks
-        +validate(krs, course) ValidationResult
+    class BatasSKSRule {
+        -int batasDefault
+        +validate(krs, repo) String
     }
 
-    class PrerequisiteValidationRule {
-        -Decimal minBobotLulus
-        +validate(krs, course) ValidationResult
+    class BentrokJadwalRule {
+        -String namaAturan
+        +validate(krs, repo) String
     }
 
-    class ScheduleConflictRule {
-        +validate(krs, course) ValidationResult
+    class KuotaKelasRule {
+        -String namaAturan
+        +validate(krs, repo) String
     }
 
-    class BillingArrearsRule {
-        +validate(krs, course) ValidationResult
+    class StatusPembayaranRule {
+        -String namaAturan
+        +validate(krs, repo) String
     }
 
-    class TranscriptService {
-        +hitungIPS(mahasiswa, semester) Decimal
-        +hitungIPK(mahasiswa) Decimal
-        +generateTranskripPDF(mahasiswa) bytes
+    class KRSValidator {
+        -List~ValidationRule~ rules
+        +validasi(krs, repo) List~String~
+        +validasiStatusSPP(payment) bool
+        +validasiBatasSKS(totalSKS, maksSKS) bool
+        +cekJadwalBentrok(daftarJadwal) List~String~
+        +tambahAturan(rule) void
+    }
+
+    %% --- 4. Dependency Inversion (DIP), Factory, Modular Services & Observer ---
+    class KRSRepository {
+        <<interface>>
+        +getKRS(nim, semester) KRS
+        +cekPrasyaratLulus(nim, kodeMK) bool
+        +simpanKRS(krs) void
+    }
+
+    class PostgresKRSRepository {
+        -String dsn
+        +getKRS(nim, semester) KRS
+        +cekPrasyaratLulus(nim, kodeMK) bool
+        +simpanKRS(krs) void
+    }
+
+    class UserFactory {
+        -String prefixNIM
+        +buat(peran, data) User
+        +generateNIM(tahun, kodeProdi) String
     }
 
     class NotificationObserver {
@@ -177,50 +220,136 @@ classDiagram
         +update(event, penerima, pesan) void
     }
 
-    class NotificationService {
+    class EmailNotifier {
+        -String smtpHost
         +update(event, penerima, pesan) void
-        +kirimNotifikasi(penerima, pesan, kanal) bool
     }
 
-    %% Inheritance (is-a)
+    class WhatsAppNotifier {
+        -String gatewayUrl
+        +update(event, penerima, pesan) void
+    }
+
+    class KRSEventBus {
+        -List~NotificationObserver~ subscribers
+        +subscribe(observer) void
+        +unsubscribe(observer) void
+        +publish(event, penerima, pesan) void
+    }
+
+    class NotificationService {
+        -KRSEventBus eventBus
+        -int maxRetry
+        +kirimNotifAsync(event, penerima, pesan) void
+        +antrekanRetry(payload) void
+    }
+
+    class SistemPMB {
+        -UserFactory userFactory
+        -NotificationService notifService
+        +daftarCalon(dataPendaftar, berkas) CalonMahasiswa
+        +verifikasiBerkas(noPendaftaran) bool
+        +prosesKelulusanPMB(noPendaftaran, kodeProdi) Mahasiswa
+    }
+
+    class KRSManager {
+        -KRSValidator validator
+        -KRSRepository krsRepo
+        -NotificationService notifService
+        +ajukanKRS(pelaku, krs) String
+        +prosesApprovalPA(dosen, krsId, keputusan, catatan) String
+    }
+
+    class JadwalService {
+        -int semesterAktif
+        +buatJadwalKuliah(kodeMK, nidn, slot) Schedule
+        +cekKonflikDosenRuang(nidn, ruang, slot) bool
+    }
+
+    class KeuanganService {
+        -NotificationService notifService
+        +cekStatusSPP(nim, semester) bool
+        +verifikasiPembayaran(nomorTagihan, metode) bool
+    }
+
+    class PresensiService {
+        -NotificationService notifService
+        +bukaQRPresensi(dosen, jadwalId, durasi) String
+        +scanQRPresensi(nim, tokenQR) bool
+    }
+
+    %% --- 5. Relasi Terarah Tanpa Siklus (Strict DAG) ---
     User <|-- CalonMahasiswa
     User <|-- Mahasiswa
     User <|-- Dosen
     User <|-- Admin
 
-    %% Realization (interface implementation)
-    ValidationRule <|.. DuplicateEnrollmentRule
-    ValidationRule <|.. SKSValidationRule
-    ValidationRule <|.. PrerequisiteValidationRule
-    ValidationRule <|.. ScheduleConflictRule
-    ValidationRule <|.. BillingArrearsRule
-    NotificationObserver <|.. NotificationService
+    PengisiKRS <|.. Mahasiswa
+    PenyetujuKRS <|.. Dosen
+    Penilai <|.. Dosen
 
-    %% Composition (kepemilikan kuat - siklus hidup terikat)
-    KRS "1" *-- "0..*" Enrollment : berisi
-    Enrollment "1" *-- "0..1" Grade : menghasilkan
+    ProgramStudi "1" o-- "0..*" Mahasiswa : memiliki
+    ProgramStudi "1" o-- "1..*" Dosen : menaungi
+    ProgramStudi "1" *-- "1..*" Course : menyusunKurikulum
+
+    Course "0..*" --> "0..*" Course : prasyarat
     Course "1" *-- "1..*" Schedule : dijadwalkanPada
 
-    %% Aggregation (kepemilikan lemah - bagian tetap hidup)
-    ProgramStudi "1" o-- "1..*" Dosen : menaungi
-    ProgramStudi "1" o-- "0..*" Mahasiswa : terdaftarDi
-    KRSManager "1" o-- "1..*" ValidationRule : menerapkan
-    KRSManager "1" o-- "0..*" NotificationObserver : memberitahu
-
-    %% Association
-    CalonMahasiswa "1" --> "0..1" Mahasiswa : dikonversiMenjadi
     Mahasiswa "1" --> "0..*" KRS : mengajukan
-    Mahasiswa "1" --> "0..*" Payment : membayar
-    Enrollment "0..*" --> "1" Course : mengambil
-    Course "0..*" --> "0..*" Course : prasyarat
+    Mahasiswa "1" --> "0..*" Payment : ditagihkan
+    KRS "1" *-- "1..*" Enrollment : berisi
+    Enrollment "1" *-- "0..1" Grade : menghasilkan
+    Schedule "1" <-- "0..*" Enrollment : terdaftarDi
     Dosen "1" --> "0..*" Schedule : mengampu
-    Dosen "1" --> "0..*" KRS : membimbingPA
 
-    %% Dependency
-    PMBService ..> CalonMahasiswa : memproses
-    PMBService ..> NIMFactory : memakai
-    PMBService ..> Mahasiswa : membuat
-    PMBService ..> NotificationObserver : memberitahu
-    KRSManager ..> KRS : mengelola
-    TranscriptService ..> Mahasiswa : membaca
-    TranscriptService ..> Enrollment : menghitung
+    ValidationRule <|.. PrasyaratRule
+    ValidationRule <|.. BatasSKSRule
+    ValidationRule <|.. BentrokJadwalRule
+    ValidationRule <|.. KuotaKelasRule
+    ValidationRule <|.. StatusPembayaranRule
+
+    PrasyaratRule ..> Course : cekPrasyarat
+    BentrokJadwalRule ..> Schedule : cekKonflik
+    StatusPembayaranRule ..> Payment : cekLunas
+
+    KRSValidator "1" o-- "1..*" ValidationRule : menerapkan
+    KRSValidator ..> KRSRepository : bacaPrasyarat
+    KRSValidator ..> KRS : memvalidasi
+
+    KRSRepository <|.. PostgresKRSRepository
+    KRSRepository ..> KRS : persistensi
+
+    KRSEventBus "1" o-- "1..*" NotificationObserver : subscribers
+    NotificationObserver <|.. EmailNotifier
+    NotificationObserver <|.. WhatsAppNotifier
+    NotificationService "1" *-- "1" KRSEventBus : delegasiEvent
+
+    UserFactory ..> User : memproduksi
+    UserFactory ..> Mahasiswa : instansiasi
+    UserFactory ..> CalonMahasiswa : instansiasi
+    UserFactory ..> Dosen : instansiasi
+    UserFactory ..> Admin : instansiasi
+
+    SistemPMB "1" --> "1" UserFactory : buatAkun
+    SistemPMB ..> ProgramStudi : validasiProdi
+    SistemPMB ..> NotificationService : kirimAsync
+
+    KRSManager "1" --> "1" KRSValidator : validasiDengan
+    KRSManager "1" --> "1" KRSRepository : dipInject
+    KRSManager ..> PengisiKRS : menerimaAktor
+    KRSManager ..> PenyetujuKRS : approvalOleh
+    KRSManager ..> KRS : kelolaStatus
+    KRSManager ..> NotificationService : kirimAsync
+
+    JadwalService ..> Course : bacaMK
+    JadwalService ..> Schedule : buatJadwal
+    JadwalService ..> Dosen : tetapkanPengampu
+
+    KeuanganService ..> Payment : verifikasiBayar
+    KeuanganService ..> Mahasiswa : cekTagihan
+    KeuanganService ..> NotificationService : kirimAsync
+
+    PresensiService ..> Schedule : kelolaQR
+    PresensiService ..> Enrollment : catatHadir
+    PresensiService ..> Dosen : validasiSesi
+    PresensiService ..> NotificationService : kirimAsync
