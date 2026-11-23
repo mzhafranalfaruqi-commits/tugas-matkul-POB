@@ -1,0 +1,36 @@
+%% Sequence Diagram 3 (Bonus) — Presensi Mahasiswa via Scan QR Code
+%% Menjawab Prompt 3 pada PDF tugas: validasi token QR, jadwal hari ini, geofence, catat hadir, & notifikasi
+
+sequenceDiagram
+    autonumber
+    actor Mhs as Mahasiswa
+    participant PS as PresensiService
+    participant DB as Database
+    participant Notif as NotificationService
+    actor Dsn as Dosen
+
+    Mhs->>+PS: scanQR(tokenJWT, nim, latitude, longitude)
+    PS->>PS: decodeDanCekJWT(tokenJWT, currentTime)
+
+    alt Token JWT tidak valid, dipalsukan, atau kedaluwarsa (> 15 menit)
+        PS-->>Mhs: HTTP 401 Unauthorized (token QR tidak valid/expired)
+    else Token JWT valid -> cek sesi dan jadwal kuliah hari ini
+        PS->>+DB: ambilSesiDanJadwal(sessionId, activeJti, nim)
+        DB-->>PS: data AttendanceSession, Schedule, & status Enrollment
+
+        alt Mahasiswa tidak terdaftar di kelas (bukan peserta KRS APPROVED)
+            PS-->>Mhs: HTTP 403 Forbidden (bukan peserta mata kuliah)
+        else Jti tidak cocok (replay token lama) atau di luar hari jadwal
+            PS-->>Mhs: HTTP 400 Bad Request (QR tidak sesuai jadwal hari ini)
+        else Di luar radius geofence kampus
+            PS-->>Mhs: HTTP 400 Bad Request (lokasi di luar radius kelas)
+        else Sudah pernah scan pada sesi pertemuan ini
+            PS-->>Mhs: HTTP 409 Conflict (presensi sudah tercatat)
+        else Lolos seluruh validasi (hadir <= 15 mnt / terlambat <= 30 mnt)
+            PS->>DB: insertAttendanceRecord(sessionId, nim, status, distance) & commit()
+            DB-->>-PS: record tersimpan
+            PS->>+Notif: kirimNotifikasi(Dsn, rekapKehadiranMahasiswa, PUSH)
+            Notif-->>-PS: terkirim
+            PS-->>-Mhs: HTTP 200 OK (status=hadir/terlambat, tercatat)
+        end
+    end

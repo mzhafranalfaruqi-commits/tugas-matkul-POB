@@ -1,0 +1,72 @@
+%% Sequence Diagram 1 — Proses Pendaftaran Mahasiswa Baru (PMB)
+%% Mencakup validasi input, idempotency, lock database, factory NIM, rollback, & notifikasi
+
+sequenceDiagram
+    autonumber
+    actor CM as CalonMahasiswa
+    actor Adm as Admin
+    participant PMB as PMBService
+    participant NIM as NIMFactory
+    participant DB as Database
+    participant Notif as NotificationService
+
+    %% Tahap 1: Registrasi Calon Mahasiswa
+    CM->>+PMB: daftarCalon(dataPendaftar)
+    PMB->>PMB: validasiFormat(email, phone, prodi, jalur)
+    alt Data tidak valid (format salah atau prodi/jalur tidak ada)
+        PMB-->>CM: HTTP 400 Bad Request (detail validasi)
+    else Data valid
+        PMB->>+DB: cekDuplikatEmail(emailLower)
+        alt Email sudah terdaftar
+            DB-->>PMB: IntegrityError / duplicate
+            PMB-->>CM: HTTP 409 Conflict (email sudah terdaftar)
+        else Email belum terdaftar
+            PMB->>DB: simpanCalon(status=pending)
+            DB-->>-PMB: CalonMahasiswa (id, status=pending)
+            PMB-->>-CM: HTTP 201 Created (noDaftar, status=pending)
+        end
+    end
+
+    %% Tahap 2: Verifikasi, Penolakan, atau Persetujuan + Generate NIM
+    Adm->>+PMB: verifikasiDanApprove(pendaftarId, admin)
+    PMB->>+DB: beginTransaction(BEGIN IMMEDIATE / FOR UPDATE)
+    DB-->>PMB: data CalonMahasiswa (atau tidak ditemukan)
+
+    alt Pendaftar tidak ditemukan
+        PMB->>DB: rollback()
+        PMB-->>Adm: HTTP 404 Not Found
+    else Status sudah rejected (konflik transisi)
+        PMB->>DB: rollback()
+        PMB-->>Adm: HTTP 409 Conflict (status bukan pending)
+    else Status sudah approved (idempotent)
+        PMB->>DB: rollback()
+        PMB-->>Adm: HTTP 200 OK (already_approved=true, nim)
+    else Ditolak oleh Admin via tolakPendaftar()
+        PMB->>DB: updateStatus(rejected) & commit()
+        PMB->>+Notif: kirimNotifikasi(CM, pesanPenolakan, EMAIL)
+        Notif-->>-PMB: terkirim
+        PMB-->>Adm: HTTP 200 OK (status=rejected)
+    else Disetujui oleh Admin (status=pending)
+        PMB->>+NIM: generateNIM(tahun, kodeProdi)
+        NIM->>DB: lockDanIncrement(nim_counter) via flush()
+        alt Nomor urut tahunan > 9999
+            NIM-->>PMB: ValueError (Nomor urut habis)
+            PMB->>DB: rollback()
+            PMB-->>Adm: HTTP 400 Bad Request
+        else Nomor urut valid
+            NIM-->>-PMB: nimFormat (YYYYKKK-NNNN)
+            PMB->>+NIM: createMahasiswa(calon, nim)
+            NIM-->>-PMB: objek Mahasiswa baru
+            PMB->>DB: updateCalon(approved, nim) & insertMahasiswa()
+            alt Gagal commit / bentrok lock sementara
+                DB-->>PMB: OperationalError / IntegrityError
+                PMB->>DB: rollback() & retry (maks 3x)
+                PMB-->>Adm: HTTP 409 Conflict jika tetap gagal
+            else Commit sukses atomik
+                DB-->>-PMB: committed
+                PMB->>+Notif: kirimNotifikasi(CM, pesanNIMBaru, EMAIL)
+                Notif-->>-PMB: terkirim
+                PMB-->>-Adm: HTTP 200 OK (nim, status=approved)
+            end
+        end
+    end
