@@ -1,0 +1,79 @@
+%% Use Case Diagram — Sistem Akademis SEVIMA-Mini (Minggu 1–2)
+%% Aktor di luar batas sistem, relasi <<include>> dan <<extend>> sesuai standar UML
+
+flowchart LR
+    %% Aktor Eksternal
+    A_CM["Calon Mahasiswa"]
+    A_Mhs["Mahasiswa"]
+    A_Dsn["Dosen"]
+    A_Adm["Admin"]
+    A_SysPMB["Sistem PMB"]
+
+    subgraph SistemAkademis["Sistem Akademis SEVIMA-Mini"]
+        direction TB
+
+        %% Modul PMB
+        UC_Daftar(["Daftar Kuliah (PMB)"])
+        UC_Verif(["Verifikasi & Approve PMB"])
+        UC_NIM(["Generate NIM Otomatis"])
+
+        %% Modul KRS
+        UC_IsiKRS(["Isi KRS"])
+        UC_ValKRS(["Validasi KRS (Prasyarat/24 SKS/Bentrok)"])
+        UC_CekSPP(["Cek Tunggakan SPP"])
+        UC_AppKRS(["Approve / Revisi KRS"])
+        UC_NotifRev(["Kirim Notifikasi Revisi"])
+
+        %% Modul Jadwal
+        UC_Jadwal(["Kelola Jadwal & Ruangan"])
+        UC_Bentrok(["Deteksi Bentrok Jadwal"])
+
+        %% Modul Nilai & Transkrip
+        UC_Nilai(["Input & Edit Nilai"])
+        UC_ValPres(["Validasi Presensi >= 75%"])
+        UC_AuditNilai(["Catat Audit Trail Nilai"])
+        UC_Transkrip(["Generate Transkrip Akademik"])
+        UC_HitungIPK(["Hitung IPS & IPK"])
+
+        %% Modul Keuangan (SPP)
+        UC_BayarSPP(["Bayar Tagihan SPP"])
+        UC_Denda(["Hitung Denda Keterlambatan"])
+        UC_KelolaSPP(["Kelola Tagihan SPP"])
+
+        %% Modul Presensi QR
+        UC_BuatQR(["Buat QR Presensi"])
+        UC_ScanQR(["Scan QR Presensi"])
+        UC_ValQR(["Validasi Token QR & Jadwal"])
+    end
+
+    %% Relasi Aktor ke Use Case
+    A_CM --> UC_Daftar
+
+    A_Adm --> UC_Verif
+    A_Adm --> UC_Jadwal
+    A_Adm --> UC_KelolaSPP
+
+    A_SysPMB --> UC_NIM
+
+    A_Mhs --> UC_IsiKRS
+    A_Mhs --> UC_Transkrip
+    A_Mhs --> UC_BayarSPP
+    A_Mhs --> UC_ScanQR
+
+    A_Dsn --> UC_AppKRS
+    A_Dsn --> UC_Nilai
+    A_Dsn --> UC_BuatQR
+
+    %% Relasi Include (Base -.-> Included)
+    UC_Verif -.->|"«include»"| UC_NIM
+    UC_IsiKRS -.->|"«include»"| UC_ValKRS
+    UC_ValKRS -.->|"«include»"| UC_CekSPP
+    UC_Jadwal -.->|"«include»"| UC_Bentrok
+    UC_Nilai -.->|"«include»"| UC_ValPres
+    UC_Nilai -.->|"«include»"| UC_AuditNilai
+    UC_Transkrip -.->|"«include»"| UC_HitungIPK
+    UC_ScanQR -.->|"«include»"| UC_ValQR
+
+    %% Relasi Extend (Extending -.-> Base)
+    UC_NotifRev -.->|"«extend»"| UC_AppKRS
+    UC_Denda -.->|"«extend»"| UC_BayarSPP
