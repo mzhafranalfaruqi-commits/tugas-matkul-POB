@@ -1,74 +1,69 @@
-%% Sequence Diagram 2 — Validasi KRS dengan Pengecekan Prasyarat, SKS, & Bentrok
-%% Mencakup rantai ValidationRule (CoR), optimistic lock, alternate flow error, & approval Dosen PA
+%% Sequence Diagram 2 — Validasi KRS (KRSValidator, KRSRepository, Loop, Self-Call, Async)
+%% Mencakup rantai aturan OOP/OCP, loop prasyarat, error spesifik collect-all, & review PA
 
 sequenceDiagram
     autonumber
     actor Mhs as Mahasiswa
     participant KM as KRSManager
-    participant VR as ValidationRule Chain
-    participant DB as Database
+    participant KV as KRSValidator
+    participant Repo as KRSRepository
     participant Notif as NotificationService
-    actor PA as Dosen PA
+    actor PA as Dosen
 
-    Mhs->>+KM: submitKRS(nim, semester, expectedVersion)
-    KM->>+DB: beginTransaction() & ambilKRS(nim, semester)
-    DB-->>KM: objek KRS + daftar Enrollment + status Payment
+    Mhs->>+KM: ajukanKRS(Mhs, krs, expectedVersion)
+    KM->>+Repo: getKRS(nim, semester)
+    Repo-->>-KM: objek KRS + daftar Enrollment + status Payment
 
-    alt Mahasiswa memiliki tunggakan SPP overdue/unpaid
-        KM->>VR: BillingArrearsRule.validate(krs, course)
-        VR-->>KM: gagal (Tunggakan SPP belum lunas)
-        KM->>DB: rollback()
-        KM-->>Mhs: HTTP 403 Forbidden (KRS diblokir tunggakan SPP)
-    else Bebas tunggakan SPP -> jalankan rantai validasi KRS
-        KM->>+VR: DuplicateEnrollmentRule.validate(krs, course)
-        VR-->>KM: hasil cek duplikasi MK
-        KM->>VR: PrerequisiteValidationRule.validate(krs, course)
-        VR->>DB: query NOT EXISTS prasyarat lulus (bobot >= 2.0) semester lalu
-        DB-->>VR: daftar prasyarat belum lulus
-        KM->>VR: SKSValidationRule.validate(krs, course)
-        VR-->>KM: cek totalSks <= 24
-        KM->>VR: ScheduleConflictRule.validate(krs, course)
-        VR-->>-KM: cek irisan interval [jamMulai, jamSelesai) pada hari sama
+    KM->>+KV: validasi(krs, Repo)
+    KV->>KV: validasiStatusSPP(payment)
 
-        alt Validasi gagal (prasyarat belum lulus / SKS > 24 / jadwal bentrok)
-            KM->>DB: rollback()
-            KM-->>Mhs: HTTP 400 Bad Request (daftar seluruh error validasi)
-        else Semua validasi lolos
-            KM->>KM: ubahStatus(Pending Approval / SUBMITTED, Mahasiswa)
-            KM->>DB: updateKRS(status=SUBMITTED, version+1) & insertLog(krs_log)
-            alt Konflik versi optimistic lock atau status tidak sah
-                DB-->>KM: StaleDataError / conflict
-                KM->>DB: rollback()
-                KM-->>Mhs: HTTP 409 Conflict (expectedVersion usang)
-            else Commit sukses
-                DB-->>-KM: committed
-                KM->>+Notif: kirimNotifikasi(PA, krsMenungguPersetujuan, EMAIL)
-                Notif-->>-KM: terkirim
-                KM-->>-Mhs: HTTP 200 OK (status=Pending Approval)
-            end
+    loop Setiap mata kuliah di KRS
+        KV->>+Repo: cekPrasyaratLulus(nim, kodeMK)
+        Repo-->>-KV: statusPrasyarat (bobot >= 2.0)
+    end
+
+    KV->>KV: validasiBatasSKS(totalSKS, 24)
+    KV->>KV: cekJadwalBentrok(daftarJadwal)
+    KV-->>-KM: daftarError[] (hasil collect-all)
+
+    alt Daftar error tidak kosong (gagal validasi)
+        Note over KM,KV: Error spesifik collect-all: tunggakan SPP, prasyarat IF101, SKS 26 > 24, bentrok IF201 vs IF203
+        KM-->>Mhs: HTTP 400/403 Gagal Validasi (daftar lengkap pesan error spesifik)
+    else Semua validasi lolos (daftarError kosong)
+        KM->>KM: ubahStatus(PENDING_APPROVAL)
+        KM->>+Repo: simpanKRS(krs, expectedVersion)
+        alt Konflik Optimistic Lock (expectedVersion usang)
+            Repo-->>KM: StaleDataError (rollback)
+            KM-->>Mhs: HTTP 409 Conflict (versi KRS berubah, muat ulang)
+        else Simpan KRS sukses
+            Repo-->>-KM: committed (version + 1)
+            KM-)Notif: kirimNotifAsync("KRS_SUBMITTED", PA, nim)
+            Notif-)PA: Email/Push: KRS mahasiswa menunggu approval PA
+            KM-->>-Mhs: HTTP 200 OK (status=PENDING_APPROVAL)
         end
     end
 
-    %% Alur Lanjutan Dosen PA (Approve / Revisi)
+    %% Alur Lanjutan Dosen PA (Approve KRS atau Ajukan Revisi KRS)
     opt Review KRS oleh Dosen PA
-        PA->>+KM: approveKRS(krs, dosen) atau reviseKRS(krs, dosen, catatan)
-        KM->>+DB: beginTransaction() & cekOtorisasiPA(krs, dosen)
+        PA->>+KM: prosesApprovalPA(PA, krsId, keputusan, catatan)
+        KM->>+Repo: getKRS(krsId, semester)
+        Repo-->>-KM: objek KRS + verifikasi PA
+
         alt Bukan Dosen PA mahasiswa bersangkutan
-            KM->>DB: rollback()
-            KM-->>PA: HTTP 403 Forbidden
-        else Dosen PA terverifikasi & disetujui
-            KM->>KM: ubahStatus(APPROVED, DosenPA)
-            KM->>DB: updateKRS(APPROVED) + insertLog + commit()
-            DB-->>KM: committed
-            KM->>+Notif: kirimNotifikasi(Mhs, krsDisetujui, PUSH)
-            Notif-->>-KM: terkirim
-            KM-->>PA: HTTP 200 OK (APPROVED)
-        else Dosen PA meminta revisi
-            KM->>KM: ubahStatus(REVISION, DosenPA)
-            KM->>DB: updateKRS(REVISION, catatan) + insertLog + commit()
-            DB-->>-KM: committed
-            KM->>+Notif: kirimNotifikasi(Mhs, catatanRevisi, EMAIL)
-            Notif-->>-KM: terkirim
-            KM-->>-PA: HTTP 200 OK (REVISION)
+            KM-->>PA: HTTP 403 Forbidden (bukan Dosen PA sah)
+        else Disetujui oleh Dosen PA (APPROVED)
+            KM->>KM: ubahStatus(APPROVED)
+            KM->>+Repo: simpanKRS(krs)
+            Repo-->>-KM: committed
+            KM-)Notif: kirimNotifAsync("KRS_APPROVED", Mhs, krsId)
+            Notif-)Mhs: Push/Email: KRS disetujui (APPROVED)
+            KM-->>PA: HTTP 200 OK (status=APPROVED)
+        else Diminta revisi oleh Dosen PA (REVISION)
+            KM->>KM: ubahStatus(REVISION)
+            KM->>+Repo: simpanKRS(krs, catatan)
+            Repo-->>-KM: committed
+            KM-)Notif: kirimNotifAsync("KRS_REVISION", Mhs, catatan)
+            Notif-)Mhs: Email/Push: Revisi KRS diperlukan (+ catatan PA)
+            KM-->>-PA: HTTP 200 OK (status=REVISION)
         end
     end
