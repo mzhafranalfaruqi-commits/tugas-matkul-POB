@@ -1,0 +1,226 @@
+%% Class Diagram UML — Sistem Akademis SEVIMA-Mini (Minggu 1–2)
+%% Mengikuti prinsip SOLID, Encapsulation, Composition vs Aggregation, & Anti God-Object
+
+classDiagram
+    direction TB
+
+    class User {
+        <<abstract>>
+        #int id
+        #String username
+        -String password
+        #String nama
+        #String email
+        +login(username, password) bool
+        +logout() void
+        +tampilkanDashboard()* DashboardView
+    }
+
+    class CalonMahasiswa {
+        -String noDaftar
+        -String statusSeleksi
+        -String jalurMasuk
+        +daftarPMB() bool
+        +cekStatusSeleksi() String
+        +tampilkanDashboard() DashboardView
+    }
+
+    class Mahasiswa {
+        -String nim
+        -int semester
+        -Decimal ipk
+        +isiKRS(krs) bool
+        +lihatTranskrip() Transkrip
+        +getIPK() Decimal
+        +tampilkanDashboard() DashboardView
+    }
+
+    class Dosen {
+        -String nidn
+        -String bidangKeahlian
+        +approveKRS(krs, catatan) bool
+        +reviseKRS(krs, catatan) bool
+        +inputNilai(enrollment, huruf) bool
+        +tampilkanDashboard() DashboardView
+    }
+
+    class Admin {
+        -String adminCode
+        -String departemen
+        +verifikasiPendaftar(calon) Mahasiswa
+        +kelolaJadwal(schedule) void
+        +kelolaTagihan(payment) void
+        +tampilkanDashboard() DashboardView
+    }
+
+    class ProgramStudi {
+        -String kode
+        -String nama
+        -String fakultas
+        +getDaftarDosen() List~Dosen~
+    }
+
+    class Course {
+        -String kode
+        -String nama
+        -int sks
+        +getInfo() String
+        +getPrasyarat() List~Course~
+    }
+
+    class KRS {
+        -int id
+        -String semester
+        -String status
+        -int totalSks
+        -int version
+        +tambahEnrollment(item) void
+        +ajukan() void
+        +ubahStatus(status, aktor) void
+    }
+
+    class Enrollment {
+        -int id
+        -String semester
+        -String status
+        +setNilai(grade) void
+        +getBobotSks() Decimal
+    }
+
+    class Schedule {
+        -int id
+        -int hari
+        -Time jamMulai
+        -Time jamSelesai
+        -String ruangan
+        +isBentrok(other) bool
+        +isAktifHariIni(tanggal) bool
+    }
+
+    class Grade {
+        -Decimal nilaiAngka
+        -String nilaiHuruf
+        -Decimal bobot
+        +konversiBobot() Decimal
+        +isLulus() bool
+    }
+
+    class Payment {
+        -String billingId
+        -String semester
+        -Decimal nominal
+        -Decimal denda
+        -Date jatuhTempo
+        -Date tanggalBayar
+        -String status
+        +bayar(jumlah) bool
+        +hitungDenda(hariTerlambat) Decimal
+        +isLunas() bool
+    }
+
+    class PMBService {
+        +daftarCalon(data) CalonMahasiswa
+        +verifikasiDanApprove(pendaftarId, admin) Mahasiswa
+        +tolakPendaftar(pendaftarId, admin) void
+    }
+
+    class NIMFactory {
+        +generateNIM(tahun, kodeProdi) String
+        +createMahasiswa(calon, nim) Mahasiswa
+    }
+
+    class KRSManager {
+        -List~ValidationRule~ rules
+        -List~NotificationObserver~ observers
+        +tambahMataKuliah(krs, course) bool
+        +validasiKRS(krs) List~String~
+        +submitKRS(krs) bool
+        +approveKRS(krs, dosen) bool
+        +reviseKRS(krs, dosen, catatan) bool
+    }
+
+    class ValidationRule {
+        <<interface>>
+        +validate(krs, course) ValidationResult
+    }
+
+    class DuplicateEnrollmentRule {
+        +validate(krs, course) ValidationResult
+    }
+
+    class SKSValidationRule {
+        -int maxSks
+        +validate(krs, course) ValidationResult
+    }
+
+    class PrerequisiteValidationRule {
+        -Decimal minBobotLulus
+        +validate(krs, course) ValidationResult
+    }
+
+    class ScheduleConflictRule {
+        +validate(krs, course) ValidationResult
+    }
+
+    class BillingArrearsRule {
+        +validate(krs, course) ValidationResult
+    }
+
+    class TranscriptService {
+        +hitungIPS(mahasiswa, semester) Decimal
+        +hitungIPK(mahasiswa) Decimal
+        +generateTranskripPDF(mahasiswa) bytes
+    }
+
+    class NotificationObserver {
+        <<interface>>
+        +update(event, penerima, pesan) void
+    }
+
+    class NotificationService {
+        +update(event, penerima, pesan) void
+        +kirimNotifikasi(penerima, pesan, kanal) bool
+    }
+
+    %% Inheritance (is-a)
+    User <|-- CalonMahasiswa
+    User <|-- Mahasiswa
+    User <|-- Dosen
+    User <|-- Admin
+
+    %% Realization (interface implementation)
+    ValidationRule <|.. DuplicateEnrollmentRule
+    ValidationRule <|.. SKSValidationRule
+    ValidationRule <|.. PrerequisiteValidationRule
+    ValidationRule <|.. ScheduleConflictRule
+    ValidationRule <|.. BillingArrearsRule
+    NotificationObserver <|.. NotificationService
+
+    %% Composition (kepemilikan kuat - siklus hidup terikat)
+    KRS "1" *-- "0..*" Enrollment : berisi
+    Enrollment "1" *-- "0..1" Grade : menghasilkan
+    Course "1" *-- "1..*" Schedule : dijadwalkanPada
+
+    %% Aggregation (kepemilikan lemah - bagian tetap hidup)
+    ProgramStudi "1" o-- "1..*" Dosen : menaungi
+    ProgramStudi "1" o-- "0..*" Mahasiswa : terdaftarDi
+    KRSManager "1" o-- "1..*" ValidationRule : menerapkan
+    KRSManager "1" o-- "0..*" NotificationObserver : memberitahu
+
+    %% Association
+    CalonMahasiswa "1" --> "0..1" Mahasiswa : dikonversiMenjadi
+    Mahasiswa "1" --> "0..*" KRS : mengajukan
+    Mahasiswa "1" --> "0..*" Payment : membayar
+    Enrollment "0..*" --> "1" Course : mengambil
+    Course "0..*" --> "0..*" Course : prasyarat
+    Dosen "1" --> "0..*" Schedule : mengampu
+    Dosen "1" --> "0..*" KRS : membimbingPA
+
+    %% Dependency
+    PMBService ..> CalonMahasiswa : memproses
+    PMBService ..> NIMFactory : memakai
+    PMBService ..> Mahasiswa : membuat
+    PMBService ..> NotificationObserver : memberitahu
+    KRSManager ..> KRS : mengelola
+    TranscriptService ..> Mahasiswa : membaca
+    TranscriptService ..> Enrollment : menghitung
