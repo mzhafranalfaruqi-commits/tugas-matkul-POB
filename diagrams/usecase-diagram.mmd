@@ -1,8 +1,8 @@
-%% Use Case Diagram — Sistem Akademis SEVIMA-Mini (Minggu 1–2)
+%% Use Case Diagram — Sistem Akademis SEVIMA-Mini (Minggu 2 - Refinement)
 %% Aktor di luar batas sistem, relasi <<include>> dan <<extend>> sesuai standar UML
 
 flowchart LR
-    %% Aktor Eksternal
+    %% Aktor Eksternal (Di Luar Boundary Sistem)
     A_CM["Calon Mahasiswa"]
     A_Mhs["Mahasiswa"]
     A_Dsn["Dosen"]
@@ -21,7 +21,8 @@ flowchart LR
         UC_IsiKRS(["Isi KRS"])
         UC_ValKRS(["Validasi KRS (Prasyarat/24 SKS/Bentrok)"])
         UC_CekSPP(["Cek Tunggakan SPP"])
-        UC_AppKRS(["Approve / Revisi KRS"])
+        UC_AppKRS(["Approve KRS"])
+        UC_RevKRS(["Ajukan Revisi KRS"])
         UC_NotifRev(["Kirim Notifikasi Revisi"])
 
         %% Modul Jadwal
@@ -37,7 +38,7 @@ flowchart LR
 
         %% Modul Keuangan (SPP)
         UC_BayarSPP(["Bayar Tagihan SPP"])
-        UC_Denda(["Hitung Denda Keterlambatan"])
+        UC_Denda(["Bayar Denda Keterlambatan"])
         UC_KelolaSPP(["Kelola Tagihan SPP"])
 
         %% Modul Presensi QR
@@ -68,6 +69,7 @@ flowchart LR
     UC_Verif -.->|"«include»"| UC_NIM
     UC_IsiKRS -.->|"«include»"| UC_ValKRS
     UC_ValKRS -.->|"«include»"| UC_CekSPP
+    UC_RevKRS -.->|"«include»"| UC_NotifRev
     UC_Jadwal -.->|"«include»"| UC_Bentrok
     UC_Nilai -.->|"«include»"| UC_ValPres
     UC_Nilai -.->|"«include»"| UC_AuditNilai
@@ -75,5 +77,5 @@ flowchart LR
     UC_ScanQR -.->|"«include»"| UC_ValQR
 
     %% Relasi Extend (Extending -.-> Base)
-    UC_NotifRev -.->|"«extend»"| UC_AppKRS
+    UC_RevKRS -.->|"«extend»"| UC_AppKRS
     UC_Denda -.->|"«extend»"| UC_BayarSPP
